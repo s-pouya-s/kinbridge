@@ -1,0 +1,20 @@
+export const theme = {
+  bg: '#080F19',
+  panel: '#121F33',
+  panel2: '#17253C',
+  stroke: '#28405F',
+  ink: '#ECE7DA',
+  inkDim: '#9FB0C4',
+  inkFaint: '#5E7290',
+  lineBlood: '#6FAE9F',
+  lineMarriage: '#E0A63E',
+  lineEnded: '#A6485A',
+  accentCousin: '#DD8064',
+  nodeFill: '#17253C',
+  nodeStroke: '#3C577A',
+  // Gender is optional on Person; these are only used when it's set.
+  maleFill: '#152840',
+  maleStroke: '#5C8FDB',
+  femaleFill: '#2A1E30',
+  femaleStroke: '#E08FB0',
+};
