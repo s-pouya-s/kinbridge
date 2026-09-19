@@ -16,7 +16,11 @@ expo-env.d.ts
 *.p8
 *.p12
 *.key
+.ssh-key
 *.mobileprovision
+
+# Cafe Bazaar signing output (regenerate from .ssh-key, don't commit the artifact)
+/bazaar-release/*.bin
 
 # Metro
 .metro-health-check*
@@ -29,6 +33,12 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
+# ...except the Cafe Bazaar signing certificate: it isn't secret (only the
+# private key is), and it must be reused byte-for-byte for every future
+# release (see bazaar-release/README.md) — losing track of it is as bad as
+# losing .ssh-key, so it's tracked despite the blanket rule above. This
+# negation must stay *after* the "*.pem" line to take effect.
+!/bazaar-release/cert.pem
 
 # local env files
 .env*.local
