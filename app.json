@@ -1,23 +1,24 @@
 {
   "expo": {
-    "name": "kinbridge",
+    "name": "شجره نامه",
     "slug": "kinbridge",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "com.kinbridge.app",
+      "package": "com.familytree.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#080F19",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -27,9 +28,31 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Kinbridge needs access to your photos so you can add a picture for someone in the family tree."
+          "photosPermission": "Family Tree needs access to your photos so you can add a picture for someone in the family tree."
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-4666171217554833~2603875318",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#080F19"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4c32c070-86f0-4950-b741-61ad9167ecf0"
+      }
+    },
+    "owner": "s-pouya-shs-team"
   }
 }

@@ -2,13 +2,23 @@ import type { FamilyData, ID, Marriage } from '../types';
 import { computeGenerations } from './generations';
 import { computeRowOrder } from './order';
 
-export const NODE_WIDTH = 108;
-export const NODE_HEIGHT = 56;
-export const COL_SPACING = 132;
-export const ROW_SPACING = 170;
-export const UNION_OFFSET = 46;
+export const NODE_WIDTH = 140;
+export const NODE_HEIGHT = 72;
+export const COL_SPACING = 164;
+export const ROW_SPACING = 220;
+export const UNION_OFFSET = 60;
 /** Vertical spacing between "lanes" when two marriages' bars would otherwise overlap — see computeLayout. */
 export const UNION_LANE_STEP = 24;
+/**
+ * How many generations' worth of "the tree is getting bigger" scaling
+ * (row spacing in computeParentChildLayout, card size + name font in
+ * TreeCanvas) keeps accumulating before it holds steady — shared so both
+ * grow in lockstep rather than each guessing its own cutoff. Past this
+ * many generations, a tree's fit-to-viewport scale is already shrinking
+ * enough on its own; letting these keep growing forever past that point
+ * would eventually make a single generation's row taller than is useful.
+ */
+export const GENERATION_GROWTH_CAP = 8;
 
 export interface Point {
   x: number;
@@ -44,6 +54,8 @@ export interface Layout {
   maxX: number;
   width: number;
   height: number;
+  /** The deepest generation actually present (0 for a single-generation tree) — TreeCanvas uses this, capped the same way computeParentChildLayout's own rowSpacing is, to grow card size and name font right along with it. */
+  maxGen: number;
 }
 
 /**
@@ -96,21 +108,55 @@ export function computeLayout(data: FamilyData, priorityPair?: [ID, ID]): Layout
   const maxX = xs.length > 0 ? Math.max(...xs) : 0;
   const maxWidth = maxX - minX + COL_SPACING;
 
+  return {
+    positions,
+    unions: buildUnions(data.marriages, positions),
+    minX,
+    maxX,
+    width: maxWidth,
+    height: (maxGen + 1) * ROW_SPACING,
+    maxGen,
+  };
+}
+
+interface RawUnion {
+  marriage: Marriage;
+  rowY: number;
+  minX: number;
+  maxX: number;
+  minCell: number;
+  maxCell: number;
+  candidates: number[];
+}
+
+/**
+ * Builds every marriage's bar + marker from a completed position map —
+ * shared by every layout strategy (see computeParentChildLayout too), since
+ * once everyone has an x/y, turning that into bars/markers doesn't depend
+ * on *how* those positions were decided.
+ */
+export function buildUnions(marriages: Marriage[], positions: Map<ID, Point>): LayoutUnion[] {
   // The marker's own cell is deliberately always a *half*-cell — exactly
   // between two adjacent whole cells — never a whole cell itself, so it can
   // never land on top of any card, occupied or not: cards only ever sit at
-  // whole cells (see the position-assignment loop above). Every half-cell
-  // between the two spouses is an equally valid "no card" spot, not just the
-  // one nearest the true midpoint, so each marriage ranks all of them by
-  // closeness to its own children's average cell (nearest the bar's own
-  // center when it has none yet, so far ties favor the later cell).
-  const rawUnions = data.marriages.map((m) => {
+  // whole cells. Every half-cell between the two spouses is an equally
+  // valid "no card" spot, not just the one nearest the true midpoint, so
+  // each marriage ranks all of them by closeness to its own children's
+  // average cell (nearest the bar's own center when it has none yet, so far
+  // ties favor the later cell).
+  const rawUnions: RawUnion[] = marriages.map((m) => {
     const [a, b] = m.spouseIds;
     const pa = positions.get(a);
     const pb = positions.get(b);
     const ax = pa?.x ?? 0;
     const bx = pb?.x ?? 0;
-    const rowY = pa?.y ?? pb?.y ?? 0;
+    // The *lower* of the two spouses' rows, not just whichever happens to
+    // be spouseIds[0] — normally the same row (spouses are leveled), but a
+    // cross-generation marriage (an ancestor marrying their own descendant,
+    // the one pairing generations.ts deliberately never levels) leaves them
+    // on two different rows, and the bar/marker belongs under the younger
+    // one, not floating above them at the elder's row.
+    const rowY = Math.max(pa?.y ?? 0, pb?.y ?? 0);
     const minCell = Math.min(ax, bx) / COL_SPACING;
     const maxCell = Math.max(ax, bx) / COL_SPACING;
 
@@ -166,7 +212,7 @@ export function computeLayout(data: FamilyData, priorityPair?: [ID, ID]): Layout
   // the current bar would otherwise overlap it — entirely automatic, so
   // overlapping bars always land on visibly different lines without needing
   // anyone to move anything.
-  const byRow = new Map<number, typeof rawUnions>();
+  const byRow = new Map<number, RawUnion[]>();
   for (const u of rawUnions) {
     const arr = byRow.get(u.rowY) ?? [];
     arr.push(u);
@@ -184,20 +230,11 @@ export function computeLayout(data: FamilyData, priorityPair?: [ID, ID]): Layout
     }
   });
 
-  const unions: LayoutUnion[] = rawUnions.map((u) => {
+  return rawUnions.map((u) => {
     const barY = u.rowY + UNION_OFFSET + (laneByMarriageId.get(u.marriage.id) ?? 0) * UNION_LANE_STEP;
     const markerX = markerCellByMarriageId.get(u.marriage.id)! * COL_SPACING;
     return { marriage: u.marriage, barY, markerX, markerY: barY };
   });
-
-  return {
-    positions,
-    unions,
-    minX,
-    maxX,
-    width: maxWidth,
-    height: (maxGen + 1) * ROW_SPACING,
-  };
 }
 
 /**

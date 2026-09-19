@@ -73,35 +73,9 @@ export interface Marriage {
   marriedYear?: number;
   endedYear?: number;
   childIds: ID[];
-  /**
-   * Marriages are auto-numbered "1st marriage" / "2nd marriage" relative to
-   * each spouse (see getMarriageOrdinal). Set this to override that label
-   * for everyone viewing this marriage. Free text, so it isn't translated —
-   * whoever writes it writes it in whichever language they're using.
-   */
-  labelOverride?: string;
 }
 
 export interface FamilyData {
   people: Person[];
   marriages: Marriage[];
-}
-
-/**
- * Where this marriage ranks (1-based) among forPersonId's own marriages,
- * ordered by year married. Deliberately returns a number, not a formatted
- * string — turning "2" into "2nd marriage" or "ازدواج دوم" is a display
- * concern that belongs with the i18n layer (see formatOrdinal), not here.
- */
-export function getMarriageOrdinal(marriage: Marriage, forPersonId: ID, allMarriages: Marriage[]): number {
-  const ownMarriages = allMarriages
-    .filter((m) => m.spouseIds.includes(forPersonId))
-    .slice()
-    .sort((a, b) => {
-      const ay = a.marriedYear ?? Number.MAX_SAFE_INTEGER;
-      const by = b.marriedYear ?? Number.MAX_SAFE_INTEGER;
-      if (ay !== by) return ay - by;
-      return a.id.localeCompare(b.id);
-    });
-  return ownMarriages.findIndex((m) => m.id === marriage.id) + 1;
 }

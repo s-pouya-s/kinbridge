@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Marriage, Person } from '../types';
-import { theme } from '../theme';
+import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 
 interface Props {
@@ -21,6 +21,8 @@ interface Props {
  */
 export function MarriagePicker({ visible, title, marriages, people, onSelect, onClose }: Props) {
   const { t, isRTL } = useI18n();
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [query, setQuery] = useState('');
   const byId = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -42,8 +44,12 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
+          comment on why nesting the ScrollView inside a Pressable made scrolling
+          fight the backdrop for touch-responder status. */}
+      <View style={styles.backdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.sheet}>
           <Text style={[styles.title, isRTL && styles.textEnd]}>{title}</Text>
           <TextInput
             style={[styles.search, isRTL && styles.textEnd]}
@@ -63,17 +69,18 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
           <Pressable style={styles.cancelButton} onPress={onClose}>
             <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: theme.panel, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36, maxHeight: '80%' },
   title: { color: theme.ink, fontSize: 17, fontWeight: '700', marginBottom: 12 },
-  textEnd: { textAlign: 'right' },
+  textEnd: { textAlign: 'right', writingDirection: 'rtl' },
   search: {
     backgroundColor: theme.panel2,
     borderWidth: 1,
@@ -97,4 +104,5 @@ const styles = StyleSheet.create({
   rowName: { color: theme.ink, fontSize: 14, fontWeight: '600' },
   cancelButton: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
   cancelButtonText: { color: theme.inkFaint, fontSize: 13 },
-});
+  });
+}

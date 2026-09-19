@@ -1,6 +1,6 @@
 import { richFamily } from './fixtures/richFamily';
 import { computeGenerations } from '../src/layout/generations';
-import { computeLayout, NODE_WIDTH, COL_SPACING, UNION_OFFSET } from '../src/layout/layout';
+import { computeLayout, NODE_WIDTH, COL_SPACING, ROW_SPACING, UNION_OFFSET } from '../src/layout/layout';
 import type { FamilyData } from '../src/types';
 import { addExistingSpouse, addSpouse, addStandalonePerson, movePersonGeneration, movePersonOneStep } from '../src/model/mutations';
 
@@ -226,6 +226,24 @@ assert(Math.abs(yusufX - sanaX) === COL_SPACING, 'Yusuf and Sana already land ad
   // everyone else in it, is correct — it's the runaway (max was in the
   // hundreds) that was the bug, not blood descent moving together.
   assert(gensAfterMove.get('tara') === 4, "Tara cascades down exactly one row too, via her real parents' chain");
+}
+
+// Same cross-generation marriage (Elias, generation 0, married to Tara,
+// generation 3) — a real reported bug: the marker/bar used to sit at
+// whichever spouse happened to be spouseIds[0]'s row, so it could land
+// floating above the *younger* spouse instead of hanging below them. It
+// must always sit under the lower (later-generation) spouse's row.
+{
+  const { data: married, marriage } = addExistingSpouse(richFamily, 'elias', 'tara');
+  const gens = computeGenerations(married);
+  const taraGen = gens.get('tara')!;
+  const eliasGen = gens.get('elias')!;
+  assert(taraGen > eliasGen, 'setup: Tara is in a later generation than Elias');
+
+  const layout = computeLayout(married);
+  const union = layout.unions.find((u) => u.marriage.id === marriage.id)!;
+  assert(union.markerY > layout.positions.get('elias')!.y, 'the marker sits below Elias, not floating above him at his own (elder) row');
+  assert(union.markerY === taraGen * ROW_SPACING + UNION_OFFSET, 'the marker sits under the lower-generation spouse (Tara), not the elder one (Elias)');
 }
 
 // Moving a card's generation (the ▲▼ arrows) into a row that already has

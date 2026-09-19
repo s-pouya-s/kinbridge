@@ -6,8 +6,18 @@ export function newId(prefix: string): ID {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function blankPerson(): Person {
-  return { id: newId('p'), name: 'New person' };
+/** "New person 1", "New person 2", ... — never reused, even across sessions or after renames/deletes, since it's always one past the highest number already present in `people`. Keeps multiple not-yet-named cards from all reading as an identical, indistinguishable "New person". */
+function nextBlankPersonNumber(people: Person[]): number {
+  let max = 0;
+  for (const p of people) {
+    const match = /^New person (\d+)$/.exec(p.name ?? '');
+    if (match) max = Math.max(max, Number(match[1]));
+  }
+  return max + 1;
+}
+
+function blankPerson(people: Person[]): Person {
+  return { id: newId('p'), name: `New person ${nextBlankPersonNumber(people)}` };
 }
 
 /**
@@ -44,7 +54,7 @@ function pinIntoManualRowIfNeeded(data: FamilyData, personId: ID): FamilyData {
 }
 
 export function addStandalonePerson(data: FamilyData): { data: FamilyData; person: Person } {
-  const person = blankPerson();
+  const person = blankPerson(data.people);
   return { data: { ...data, people: [...data.people, person] }, person };
 }
 
@@ -73,7 +83,7 @@ export function deletePerson(data: FamilyData, personId: ID): FamilyData {
 }
 
 export function addSpouse(data: FamilyData, personId: ID): { data: FamilyData; person: Person; marriage: Marriage } {
-  const person = blankPerson();
+  const person = blankPerson(data.people);
   const marriage: Marriage = { id: newId('m'), spouseIds: [personId, person.id], status: 'current', childIds: [] };
   const next = pinIntoManualRowIfNeeded({ ...data, people: [...data.people, person], marriages: [...data.marriages, marriage] }, person.id);
   return { data: next, person, marriage };
@@ -113,8 +123,8 @@ export function hasParents(data: FamilyData, personId: ID): boolean {
  * addExistingSpouse/addExistingChild.
  */
 export function addParents(data: FamilyData, childId: ID): { data: FamilyData; parentA: Person; parentB: Person; marriage: Marriage } {
-  const parentA = blankPerson();
-  const parentB = blankPerson();
+  const parentA = blankPerson(data.people);
+  const parentB = blankPerson([...data.people, parentA]);
   const marriage: Marriage = { id: newId('m'), spouseIds: [parentA.id, parentB.id], status: 'current', childIds: [childId] };
   const withParents = { ...data, people: [...data.people, parentA, parentB], marriages: [...data.marriages, marriage] };
   const next = pinIntoManualRowIfNeeded(pinIntoManualRowIfNeeded(withParents, parentA.id), parentB.id);
@@ -139,7 +149,7 @@ export function deleteMarriage(data: FamilyData, marriageId: ID): FamilyData {
 export function addChild(data: FamilyData, marriageId: ID): { data: FamilyData; person: Person } {
   const marriage = data.marriages.find((m) => m.id === marriageId);
   const father = marriage && data.people.find((p) => marriage.spouseIds.includes(p.id) && p.gender === 'male');
-  const person: Person = { ...blankPerson(), surname: father ? father.surname : undefined };
+  const person: Person = { ...blankPerson(data.people), surname: father ? father.surname : undefined };
   const next = pinIntoManualRowIfNeeded(
     {
       ...data,

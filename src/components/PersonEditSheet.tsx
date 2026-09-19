@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Gender, ID, Marriage, Person } from '../types';
-import { theme } from '../theme';
+import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { formatJalali } from '../utils/jalali';
 import { pickPersonPhoto } from '../utils/photo';
@@ -27,8 +27,10 @@ interface Props {
   onAddParents: () => void;
   /** Attaches this person as a child of an existing marriage instead of creating new parents. */
   onAddExistingParents: (marriageId: ID) => void;
-  /** Clears any manual drag-reorder and any arrow-opened gaps for this person's whole row, back to the automatic order. Applies immediately. */
-  onResetOrder: () => void;
+  /** Unlinks this person from their recorded parents' marriage — the marriage itself, and any siblings, are untouched. */
+  onRemoveParents: () => void;
+  /** Deletes a marriage this person is a spouse in. Only offered while it has no children (see canDeleteMarriage) — same rule as MarriageEditSheet's own delete button. */
+  onRemoveSpouse: (marriageId: ID) => void;
 }
 
 /**
@@ -47,9 +49,12 @@ export function PersonEditSheet({
   onAddExistingSpouse,
   onAddParents,
   onAddExistingParents,
-  onResetOrder,
+  onRemoveParents,
+  onRemoveSpouse,
 }: Props) {
   const { t, isRTL } = useI18n();
+  const { theme } = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [spousePickerOpen, setSpousePickerOpen] = useState(false);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [name, setName] = useState('');
@@ -80,8 +85,16 @@ export function PersonEditSheet({
 
   const nameValid = name.trim().length > 0;
   const inputStyle = [styles.input, isRTL && styles.textEnd];
-  const alreadyHasParents = marriages.some((m) => m.childIds.includes(person.id));
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const parentMarriage = marriages.find((m) => m.childIds.includes(person.id));
+  const spouseMarriages = marriages.filter((m) => m.spouseIds.includes(person.id));
   const parentCandidates = marriages.filter((m) => !m.spouseIds.includes(person.id) && !m.childIds.includes(person.id));
+
+  const personLabel = (id: ID) => {
+    const p = byId.get(id);
+    if (!p) return t('unknown');
+    return p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' ');
+  };
 
   const handleChoosePhoto = async () => {
     const uri = await pickPersonPhoto(t);
@@ -107,26 +120,30 @@ export function PersonEditSheet({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
+          comment on why nesting the ScrollView inside a Pressable made scrolling
+          fight the backdrop for touch-responder status. */}
+      <View style={styles.backdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={styles.sheet}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={[styles.title, isRTL && styles.textEnd]}>{t('editPerson')}</Text>
 
-            <Field label={t('nameRequired')} isRTL={isRTL}>
+            <Field styles={styles} label={t('nameRequired')} isRTL={isRTL}>
               <TextInput style={inputStyle} value={name} onChangeText={setName} placeholder={t('name')} placeholderTextColor={theme.inkFaint} />
             </Field>
-            <Field label={t('surname')} isRTL={isRTL}>
+            <Field styles={styles} label={t('surname')} isRTL={isRTL}>
               <TextInput style={inputStyle} value={surname} onChangeText={setSurname} placeholder={t('surname')} placeholderTextColor={theme.inkFaint} />
             </Field>
 
-            <Field label={t('gender')} isRTL={isRTL}>
+            <Field styles={styles} label={t('gender')} isRTL={isRTL}>
               <View style={[styles.segmented, isRTL && styles.rowRTL]}>
-                <SegButton label={t('male')} active={gender === 'male'} onPress={() => setGender(gender === 'male' ? undefined : 'male')} accent={theme.maleStroke} />
-                <SegButton label={t('female')} active={gender === 'female'} onPress={() => setGender(gender === 'female' ? undefined : 'female')} accent={theme.femaleStroke} />
+                <SegButton styles={styles} label={t('male')} active={gender === 'male'} onPress={() => setGender(gender === 'male' ? undefined : 'male')} accent={theme.maleStroke} />
+                <SegButton styles={styles} label={t('female')} active={gender === 'female'} onPress={() => setGender(gender === 'female' ? undefined : 'female')} accent={theme.femaleStroke} />
               </View>
             </Field>
 
-            <Field label={t('photo')} isRTL={isRTL}>
+            <Field styles={styles} label={t('photo')} isRTL={isRTL}>
               <View style={[styles.photoRow, isRTL && styles.rowRTL]}>
                 {photo ? (
                   <Image source={{ uri: photo }} style={styles.photoPreview} />
@@ -151,19 +168,19 @@ export function PersonEditSheet({
                 every place afterward. */}
             <View style={[styles.row, isRTL && styles.rowRTL]}>
               <View style={{ flex: 1 }}>
-                <Field label={t('bornYear')} isRTL={isRTL}>
+                <Field styles={styles} label={t('bornYear')} isRTL={isRTL}>
                   <Pressable style={styles.dateField} onPress={() => setActivePicker('born')}>
                     <Text style={[styles.dateFieldText, !born && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
                       {born ? formatJalali(born) : t('selectDate')}
                     </Text>
                   </Pressable>
                 </Field>
-                <Field label={t('placeOfBirth')} isRTL={isRTL}>
+                <Field styles={styles} label={t('placeOfBirth')} isRTL={isRTL}>
                   <TextInput style={inputStyle} value={birthPlace} onChangeText={setBirthPlace} placeholder={t('cityPlaceholder')} placeholderTextColor={theme.inkFaint} />
                 </Field>
               </View>
               <View style={{ flex: 1 }}>
-                <Field label={t('diedYear')} isRTL={isRTL}>
+                <Field styles={styles} label={t('diedYear')} isRTL={isRTL}>
                   <Pressable style={styles.dateField} onPress={() => setActivePicker('died')}>
                     <Text style={[styles.dateFieldText, !died && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
                       {died ? formatJalali(died) : t('selectDate')}
@@ -172,7 +189,7 @@ export function PersonEditSheet({
                   {!died && <Text style={[styles.hint, isRTL && styles.textEnd]}>{t('livingNoDeathDate')}</Text>}
                 </Field>
                 {died && (
-                  <Field label={t('placeOfBurial')} isRTL={isRTL}>
+                  <Field styles={styles} label={t('placeOfBurial')} isRTL={isRTL}>
                     <TextInput style={inputStyle} value={gravePlace} onChangeText={setGravePlace} placeholder={t('cemeteryPlaceholder')} placeholderTextColor={theme.inkFaint} />
                   </Field>
                 )}
@@ -193,7 +210,7 @@ export function PersonEditSheet({
               onClose={() => setActivePicker(null)}
               onChange={setDied}
             />
-            <Field label={t('notes')} isRTL={isRTL}>
+            <Field styles={styles} label={t('notes')} isRTL={isRTL}>
               <TextInput
                 style={[...inputStyle, styles.inputMultiline]}
                 value={notes}
@@ -204,23 +221,16 @@ export function PersonEditSheet({
               />
             </Field>
 
-            <Field label={t('position')} isRTL={isRTL}>
-              {/* Reordering and spacing both live on the tree itself now (the
-                  ‹ › arrows in edit mode) — this is just the escape hatch back
-                  to "let the algorithm decide" for this person's whole row. */}
-              <Text style={styles.hint}>{t('positionHint')}</Text>
-              <Pressable onPress={onResetOrder} style={{ marginTop: 8 }}>
-                <Text style={styles.resetLink}>{t('resetOrder')}</Text>
-              </Pressable>
-            </Field>
-
-            <Pressable style={[styles.primaryButton, !nameValid && styles.buttonDisabled]} disabled={!nameValid} onPress={handleSave}>
-              <Text style={styles.primaryButtonText}>{t('save')}</Text>
-            </Pressable>
-
-            <Field label={t('parents')} isRTL={isRTL}>
-              {alreadyHasParents ? (
-                <Text style={[styles.hint, isRTL && styles.textEnd]}>{t('parentsAlreadySet')}</Text>
+            <Field styles={styles} label={t('parents')} isRTL={isRTL}>
+              {parentMarriage ? (
+                <View style={[styles.connectionRow, isRTL && styles.rowRTL]}>
+                  <Text style={[styles.connectionName, isRTL && styles.textEnd]}>
+                    {parentMarriage.spouseIds.map(personLabel).join(` ${t('and')} `)}
+                  </Text>
+                  <Pressable style={styles.connectionRemove} onPress={onRemoveParents}>
+                    <Text style={styles.connectionRemoveText}>×</Text>
+                  </Pressable>
+                </View>
               ) : (
                 <View style={[styles.row, isRTL && styles.rowRTL]}>
                   <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={onAddParents}>
@@ -233,14 +243,39 @@ export function PersonEditSheet({
               )}
             </Field>
 
-            <View style={[styles.row, isRTL && styles.rowRTL]}>
-              <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={onAddSpouse}>
-                <Text style={styles.secondaryButtonText}>{t('addSpouse')}</Text>
-              </Pressable>
-              <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={() => setSpousePickerOpen(true)}>
-                <Text style={styles.secondaryButtonText}>{t('linkExistingPerson')}</Text>
-              </Pressable>
-            </View>
+            <Field styles={styles} label={t('spouse')} isRTL={isRTL}>
+              {spouseMarriages.map((m) => {
+                const spouseId = m.spouseIds.find((id) => id !== person.id)!;
+                const removable = m.childIds.length === 0;
+                return (
+                  <View key={m.id} style={[styles.connectionRow, isRTL && styles.rowRTL]}>
+                    <Text style={[styles.connectionName, isRTL && styles.textEnd]}>
+                      {personLabel(spouseId)}
+                      {m.status === 'ended' ? ` — ${t('endedMarriage')}` : ''}
+                    </Text>
+                    {removable ? (
+                      <Pressable style={styles.connectionRemove} onPress={() => onRemoveSpouse(m.id)}>
+                        <Text style={styles.connectionRemoveText}>×</Text>
+                      </Pressable>
+                    ) : (
+                      <Text style={styles.hint}>{t('deleteMarriageHint')}</Text>
+                    )}
+                  </View>
+                );
+              })}
+              <View style={[styles.row, isRTL && styles.rowRTL]}>
+                <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={onAddSpouse}>
+                  <Text style={styles.secondaryButtonText}>{t('createPerson')}</Text>
+                </Pressable>
+                <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={() => setSpousePickerOpen(true)}>
+                  <Text style={styles.secondaryButtonText}>{t('selectExistingPerson')}</Text>
+                </Pressable>
+              </View>
+            </Field>
+
+            <Pressable style={[styles.primaryButton, !nameValid && styles.buttonDisabled]} disabled={!nameValid} onPress={handleSave}>
+              <Text style={styles.primaryButtonText}>{t('save')}</Text>
+            </Pressable>
 
             <Pressable style={styles.dangerButton} onPress={onDelete}>
               <Text style={styles.dangerButtonText}>{t('deletePerson')}</Text>
@@ -250,8 +285,8 @@ export function PersonEditSheet({
               <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </Pressable>
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
 
       <PersonPicker
         visible={spousePickerOpen}
@@ -278,7 +313,19 @@ export function PersonEditSheet({
   );
 }
 
-function Field({ label, children, style, isRTL }: { label: string; children: React.ReactNode; style?: object; isRTL: boolean }) {
+function Field({
+  label,
+  children,
+  style,
+  isRTL,
+  styles,
+}: {
+  label: string;
+  children: React.ReactNode;
+  style?: object;
+  isRTL: boolean;
+  styles: Styles;
+}) {
   return (
     <View style={[styles.field, style]}>
       <Text style={[styles.fieldLabel, isRTL && styles.textEnd]}>{label}</Text>
@@ -287,7 +334,19 @@ function Field({ label, children, style, isRTL }: { label: string; children: Rea
   );
 }
 
-function SegButton({ label, active, onPress, accent }: { label: string; active: boolean; onPress: () => void; accent: string }) {
+function SegButton({
+  label,
+  active,
+  onPress,
+  accent,
+  styles,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  accent: string;
+  styles: Styles;
+}) {
   return (
     <Pressable style={[styles.segButton, active && { borderColor: accent, backgroundColor: accent + '22' }]} onPress={onPress}>
       <Text style={[styles.segButtonText, active && { color: accent }]}>{label}</Text>
@@ -295,13 +354,16 @@ function SegButton({ label, active, onPress, accent }: { label: string; active: 
   );
 }
 
-const styles = StyleSheet.create({
+type Styles = ReturnType<typeof createStyles>;
+
+function createStyles(theme: Theme) {
+  return StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: theme.panel, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36, maxHeight: '88%' },
   title: { color: theme.ink, fontSize: 18, fontWeight: '700', marginBottom: 16 },
   row: { flexDirection: 'row', gap: 12 },
   rowRTL: { flexDirection: 'row-reverse' },
-  textEnd: { textAlign: 'right' },
+  textEnd: { textAlign: 'right', writingDirection: 'rtl' },
   field: { marginBottom: 14 },
   fieldLabel: { color: theme.inkFaint, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
   input: {
@@ -348,6 +410,20 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.4 },
   hint: { color: theme.inkFaint, fontSize: 11.5, marginTop: 6, textAlign: 'center' },
   resetLink: { color: theme.lineMarriage, fontSize: 11.5, textAlign: 'center', fontWeight: '600' },
+  connectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: theme.panel2,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 8,
+  },
+  connectionName: { color: theme.ink, fontSize: 13.5, flexShrink: 1 },
+  connectionRemove: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.panel },
+  connectionRemoveText: { color: theme.lineEnded, fontSize: 15, fontWeight: '700' },
   cancelButton: { paddingVertical: 12, alignItems: 'center', marginTop: 4 },
   cancelButtonText: { color: theme.inkFaint, fontSize: 13 },
-});
+  });
+}

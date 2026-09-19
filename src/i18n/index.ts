@@ -46,9 +46,3 @@ export function useI18n(): I18nContextValue {
   if (!ctx) throw new Error('useI18n() must be called within an I18nProvider');
   return ctx;
 }
-
-/** "1st"/"اول" etc. for 1-10, a generic "{n}th"/"{n}اُم" pattern beyond that. */
-export function formatOrdinal(t: TFunction, n: number): string {
-  if (n >= 1 && n <= 10) return t(`ordinal${n}` as StringKey);
-  return t('ordinalOther', { n });
-}

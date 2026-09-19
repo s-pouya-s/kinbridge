@@ -41,7 +41,7 @@ export async function saveFamilyData(data: FamilyData): Promise<void> {
 export async function exportFamilyData(data: FamilyData): Promise<void> {
   const exportedAt = new Date().toISOString();
   const json = JSON.stringify({ ...data, exportedAt }, null, 2);
-  const fileName = `kinbridge-export-${exportedAt.slice(0, 10)}.json`;
+  const fileName = `family-tree-export-${exportedAt.slice(0, 10)}.json`;
 
   if (Platform.OS === 'web') {
     const doc = (globalThis as any).document;
