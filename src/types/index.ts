@@ -21,6 +21,12 @@ export interface Person {
    */
   born?: string;
   died?: string;
+  /**
+   * Known to have passed away, even when the date isn't known. Anyone with a
+   * `died` date counts as deceased too, with or without this; use
+   * isDeceased (src/model/people.ts) rather than checking either alone.
+   */
+  deceased?: boolean;
   birthPlace?: string;
   gravePlace?: string;
   /** Reserved for a future "show on map" pin. Free-text gravePlace is enough for v1. */
@@ -34,6 +40,13 @@ export interface Person {
    * export (see storage.ts), which carries it along as plain text either way.
    */
   photoUri?: string;
+  /**
+   * The person's photo album, in the order added: shown on their info sheet
+   * after the notes. Each entry is a file name in the app's album folder
+   * (on a phone) or an inline data: URI (on web) — see src/utils/album.ts
+   * for why, and albumPhotoUri to turn one into something an <Image> shows.
+   */
+  photos?: string[];
   /** A placeholder for a spouse whose identity was never recorded. */
   unknown?: boolean;
   /**
@@ -73,6 +86,14 @@ export interface Marriage {
   marriedYear?: number;
   endedYear?: number;
   childIds: ID[];
+  /**
+   * Set once someone has put this couple's children in order by hand (the
+   * ↑/↓ buttons on the marriage's edit form) — for families who know who was
+   * born first but not the dates. While set, childIds' own order is the
+   * sibling order on the tree; unset, siblings are sorted by birth date. See
+   * layout/siblings.ts.
+   */
+  manualChildOrder?: boolean;
 }
 
 export interface FamilyData {

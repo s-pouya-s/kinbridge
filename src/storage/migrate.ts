@@ -32,9 +32,25 @@ function clampManualGeneration(data: FamilyData): FamilyData {
   };
 }
 
+/**
+ * A marriage that names someone who isn't in `people` (a hand-edited or
+ * half-broken file; the app's own built-in sample family once did exactly
+ * this) drew a ⊕ with lines to children who never appeared. Children that
+ * don't exist are dropped from their marriage, and a marriage missing one
+ * of its two spouses is dropped altogether.
+ */
+function dropDanglingLinks(data: FamilyData): FamilyData {
+  const ids = new Set(data.people.map((p) => p.id));
+  const marriages = data.marriages
+    .filter((m) => m.spouseIds.every((id) => ids.has(id)))
+    .map((m) => (m.childIds.every((id) => ids.has(id)) ? m : { ...m, childIds: m.childIds.filter((id) => ids.has(id)) }));
+  const unchanged = marriages.length === data.marriages.length && marriages.every((m, i) => m === data.marriages[i]);
+  return unchanged ? data : { ...data, marriages };
+}
+
 export function normalizeFamilyData(data: FamilyData): FamilyData {
   return clampManualGeneration({
-    ...data,
+    ...dropDanglingLinks(data),
     people: data.people.map((p) => {
       const born = typeof p.born === 'number' ? `${p.born}-01-01` : p.born;
       const died = typeof p.died === 'number' ? `${p.died}-01-01` : p.died;

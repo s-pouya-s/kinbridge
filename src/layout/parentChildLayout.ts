@@ -1,5 +1,6 @@
 import type { FamilyData, ID, Person } from '../types';
-import { COL_SPACING, GENERATION_GROWTH_CAP, ROW_SPACING, buildUnions, type Layout, type Point } from './layout';
+import { byBirth, orderedChildIds } from './siblings';
+import { COMPACT_METRICS, GENERATION_GROWTH_CAP, MARKER_RADIUS, buildUnions, type CardMetrics, type Layout, type Point } from './layout';
 
 /** Empty cells between a row of blood siblings and its outsider-spouse overflow zone. */
 const OUTSIDER_GAP = 1;
@@ -28,7 +29,10 @@ const OUTSIDER_GAP = 1;
  * rendering, gestures, zoom/pan, and selection/highlighting all work
  * unchanged regardless of which one produced it.
  */
-export function computeParentChildLayout(data: FamilyData): Layout {
+export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics = COMPACT_METRICS): Layout {
+  // Every size below comes from the card style (see CardMetrics); only the
+  // spacing changes between styles, never which cell or row anyone lands in.
+  const COL_SPACING = metrics.colSpacing;
   // Deliberately not computeGenerations (the shared function used for both
   // views) — that one levels a married pair onto the same row, which is
   // right for computeLayout's packed rows (a couple needs to sit side by
@@ -55,10 +59,10 @@ export function computeParentChildLayout(data: FamilyData): Layout {
   // same (already-larger) spacing rather than continuing to grow.
   const maxGen = Math.max(0, ...Array.from(bloodDepth.values()));
   const GENERATION_GAP_GROWTH_PER_GEN = 16;
-  const rowSpacing = ROW_SPACING + Math.min(maxGen, GENERATION_GROWTH_CAP) * GENERATION_GAP_GROWTH_PER_GEN;
+  const rowSpacing = metrics.rowSpacing + Math.min(maxGen, GENERATION_GROWTH_CAP) * GENERATION_GAP_GROWTH_PER_GEN;
 
   const peopleById = new Map<ID, Person>(data.people.map((p) => [p.id, p]));
-  const byBirth = (a: ID, b: ID) => (peopleById.get(a)?.born ?? '9999-99-99').localeCompare(peopleById.get(b)?.born ?? '9999-99-99');
+  const byBirthDate = byBirth(peopleById);
 
   const hasParentMarriage = new Set<ID>();
   for (const m of data.marriages) for (const c of m.childIds) hasParentMarriage.add(c);
@@ -157,19 +161,25 @@ export function computeParentChildLayout(data: FamilyData): Layout {
     const cached = bloodChildrenCache.get(personId);
     if (cached) return cached;
     const seen = new Set<ID>();
-    const kids: ID[] = [];
+    let kids: ID[] = [];
+    let anyManual = false;
     for (const m of data.marriages) {
       if (!m.spouseIds.includes(personId)) continue;
       const owner = sharedOwner.get(m.id);
       if (owner != null && owner !== personId) continue;
-      for (const c of m.childIds) {
+      anyManual = anyManual || !!m.manualChildOrder;
+      for (const c of orderedChildIds(m, peopleById)) {
         if (!seen.has(c)) {
           seen.add(c);
           kids.push(c);
         }
       }
     }
-    kids.sort(byBirth);
+    // Children of several marriages are normally interleaved by birth date.
+    // Once any of those marriages has a hand-set order, dates can't be
+    // trusted to line up with it, so each marriage's children stay together
+    // in their own order instead, one marriage after another.
+    if (!anyManual) kids = kids.sort(byBirthDate);
     bloodChildrenCache.set(personId, kids);
     return kids;
   };
@@ -427,13 +437,46 @@ export function computeParentChildLayout(data: FamilyData): Layout {
   const minX = xs.length > 0 ? Math.min(...xs) : 0;
   const maxX = xs.length > 0 ? Math.max(...xs) : 0;
 
+  // A row whose marriages' bars overlap stacks them into lanes (see
+  // buildUnions), each one UNION_LANE_STEP lower. The plain rowSpacing only
+  // leaves room for two, so with three or more the lowest ⊕ markers reached
+  // down into the next row's cards. Lanes depend only on x, so build the
+  // unions once, then give each row the height its own deepest lane needs:
+  // a busy row pushes every row below it down, a quiet row keeps the
+  // normal gap.
+  // Captured before the rows are respaced below: right now every y is
+  // still exactly depth * rowSpacing.
+  const generationOf = new Map(Array.from(positions, ([id, p]) => [id, Math.round(p.y / rowSpacing)]));
+  const firstUnions = buildUnions(data.marriages, positions, metrics);
+  const deepestBarBelowRow = new Map<number, number>();
+  for (const u of firstUnions) {
+    const rowY = Math.max(...u.marriage.spouseIds.map((id) => positions.get(id)?.y ?? 0));
+    deepestBarBelowRow.set(rowY, Math.max(deepestBarBelowRow.get(rowY) ?? 0, u.barY - rowY));
+  }
+  // Below the deepest marker: its radius, then room for the child lines to
+  // leave it before they reach the next row's (possibly fully grown) cards.
+  const CHILD_LINE_ROOM = 40;
+  const rowTop = new Map<number, number>();
+  let y = 0;
+  for (let depth = 0; depth <= maxGen; depth++) {
+    const oldY = depth * rowSpacing;
+    rowTop.set(oldY, y);
+    const deepest = deepestBarBelowRow.get(oldY);
+    y += deepest == null ? rowSpacing : Math.max(rowSpacing, deepest + MARKER_RADIUS + CHILD_LINE_ROOM + metrics.maxCardHalfHeight);
+  }
+  const moved = Array.from(positions.values()).some((p) => rowTop.get(p.y) !== p.y);
+  if (moved) {
+    for (const [id, p] of positions) positions.set(id, { x: p.x, y: rowTop.get(p.y) ?? p.y });
+  }
+
   return {
     positions,
-    unions: buildUnions(data.marriages, positions),
+    unions: moved ? buildUnions(data.marriages, positions, metrics) : firstUnions,
+    generationOf,
     minX,
     maxX,
     width: maxX - minX + COL_SPACING,
-    height: (maxGen + 1) * rowSpacing,
+    height: y,
     maxGen,
   };
 }

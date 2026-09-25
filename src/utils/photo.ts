@@ -37,7 +37,7 @@ export async function pickPersonPhoto(t: TFunction): Promise<string | null> {
   const uri = result.assets[0].uri;
 
   if (Platform.OS === 'web') {
-    return resizeImageWeb(uri);
+    return resizeImageWeb(uri, MAX_DIMENSION, JPEG_QUALITY);
   }
 
   const rendered = await ImageManipulator.manipulate(uri).resize({ width: MAX_DIMENSION }).renderAsync();
@@ -45,12 +45,12 @@ export async function pickPersonPhoto(t: TFunction): Promise<string | null> {
   return `data:image/jpeg;base64,${saved.base64}`;
 }
 
-/** expo-image-picker's web implementation hands back a browser-local uri (data:/blob:) with no size control of its own — draw it to a canvas at MAX_DIMENSION to get the same bounded, compressed result native gets from expo-image-manipulator. */
-function resizeImageWeb(uri: string): Promise<string> {
+/** expo-image-picker's web implementation hands back a browser-local uri (data:/blob:) with no size control of its own — draw it to a canvas at maxDimension to get the same bounded, compressed result native gets from expo-image-manipulator. */
+export function resizeImageWeb(uri: string, maxDimension: number, quality: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const image = new (globalThis as any).Image();
     image.onload = () => {
-      const scale = Math.min(1, MAX_DIMENSION / Math.max(image.width, image.height));
+      const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
       const width = Math.round(image.width * scale);
       const height = Math.round(image.height * scale);
       const canvas = (globalThis as any).document.createElement('canvas');
@@ -58,7 +58,7 @@ function resizeImageWeb(uri: string): Promise<string> {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(image, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', JPEG_QUALITY));
+      resolve(canvas.toDataURL('image/jpeg', quality));
     };
     image.onerror = () => reject(new Error('Failed to load picked image'));
     image.src = uri;

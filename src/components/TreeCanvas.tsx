@@ -1,13 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { LinearTransition, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import type { FamilyData, ID, Marriage, Person } from '../types';
-import { COL_SPACING, GENERATION_GROWTH_CAP, mirrorX, NODE_HEIGHT, NODE_WIDTH } from '../layout/layout';
+import { CARD_METRICS, GENERATION_GROWTH_CAP, MARKER_RADIUS, mirrorX, NODE_HEIGHT, NODE_WIDTH, UNION_LANE_STEP, type CardStyle } from '../layout/layout';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
+import { LineSegment } from './LineSegment';
+import { clamp, clampAxis } from '../utils/camera';
+import { cardColors, raisedCardStyle } from './cardLook';
+import { MourningRibbon } from './MourningRibbon';
+import { isDeceased } from '../model/people';
+import { Minimap, MINIMAP_RESERVE, type MinimapCard, type MinimapLine } from './Minimap';
 
 // The floor for both Reset's fit-by-height (see fitToViewport) and manual
 // pinch-zoom-out — fit-by-height rarely needs it (a tree's generation count
@@ -17,15 +22,13 @@ const MIN_SCALE = 0.12;
 const MAX_SCALE = 2.5;
 const CANVAS_PADDING = 90;
 const ARROW_HIT = 44;
-/** Tap target diameter around a marriage's ⊕ — bigger than the 11px visual circle so it's easy to hit. */
-const MARKER_HIT = 32;
+/** Tap target diameter around a marriage's ⊕ — a full finger's width, and no more than UNION_LANE_STEP so two stacked markers never share a tap area. */
+const MARKER_HIT = UNION_LANE_STEP - 2;
 
 interface Props {
   data: FamilyData;
   isRTL: boolean;
   editMode: boolean;
-  /** Which screen axis generations grow along — 'vertical' (the original layout: generations top-to-bottom, siblings spread left-right) or 'horizontal' (generations left-to-right, siblings spread top-to-bottom). Cards themselves never rotate; only the arrangement direction changes. */
-  orientation: 'vertical' | 'horizontal';
   /** View mode: opens the read-only sheet and recenters the tree on this person. */
   onPersonPress: (person: Person) => void;
   /** Edit mode: opens the editable form instead. */
@@ -34,73 +37,31 @@ interface Props {
   onMarriageEdit: (marriage: Marriage) => void;
   /** Bumped by the parent whenever it wants the view re-fit and re-centered (e.g. after import, or the reset button). */
   resetToken: number;
+  /** Compact (name beside a small photo) or large (a tall card, big photo on top) — a setting in the side menu. */
+  cardStyle: CardStyle;
+  /**
+   * Set while someone is choosing a person by tapping them on the tree (see
+   * RelationshipSheet): the next card tap goes here instead of selecting it,
+   * and a banner in place of the minimap says so.
+   */
+  pickPrompt?: { message: string; cancelLabel: string; onPick: (person: Person) => void; onCancel: () => void };
+  /** Someone to start centered on and selected (a person's own tree, see PersonTreeView), instead of the tree's left edge. */
+  focusPersonId?: ID;
+  /** The black mourning ribbon on deceased people's cards — a setting in the side menu; on unless turned off. */
+  showRibbon?: boolean;
+  /** Replaces the "tap again" hint shown under a selected card, for a canvas where a second tap does something else. */
+  tapAgainHint?: string;
+  /** Edit mode only: the on-canvas + button, opposite the ↻ one. */
+  onAddPerson: () => void;
+  /** The overview map at the top of the canvas — a setting in the side menu. */
+  showMinimap: boolean;
   /** Edit mode, the on-canvas ▲ ▼ arrows: move this person's whole row up or down a generation. */
   onMovePersonGeneration: (personId: ID, direction: 'up' | 'down') => void;
 }
 
-function clamp(v: number, min: number, max: number) {
-  'worklet';
-  return Math.max(min, Math.min(max, v));
-}
 
-function cardColors(person: Person, theme: Theme) {
-  if (person.unknown) return { fill: theme.panel2, stroke: theme.inkFaint };
-  if (person.gender === 'male') return { fill: theme.maleFill, stroke: theme.maleStroke };
-  if (person.gender === 'female') return { fill: theme.femaleFill, stroke: theme.femaleStroke };
-  return { fill: theme.nodeFill, stroke: theme.nodeStroke };
-}
 
-/**
- * A straight line between two points, as a rotated plain View rather than
- * an SVG <Line> — react-native-svg rasterizes an entire <Svg> into one
- * native bitmap sized to that element's own width/height. For a large tree
- * (many generations or a wide row of siblings), that bitmap can exceed the
- * OS's hardware bitmap size limit and crash outright on the very next draw
- * — a real crash report: "Canvas: trying to draw too large bitmap", which
- * happens immediately on app open since the tree renders right away. Plain
- * Views don't share that limit; they're composited normally no matter how
- * many there are.
- */
-function LineSegment({
-  x1,
-  y1,
-  x2,
-  y2,
-  color,
-  strokeWidth,
-  dashed,
-}: {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  color: string;
-  strokeWidth: number;
-  dashed?: boolean;
-}) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const length = Math.hypot(dx, dy);
-  if (length === 0) return null;
-  const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
-  return (
-    <View
-      style={{
-        position: 'absolute',
-        left: x1,
-        top: y1 - strokeWidth / 2,
-        width: length,
-        height: strokeWidth,
-        backgroundColor: color,
-        opacity: dashed ? 0.55 : 1,
-        transform: [{ rotate: `${angleDeg}deg` }],
-        transformOrigin: '0% 50%',
-      }}
-    />
-  );
-}
-
-/** The tappable ⊕ marker's circle — see LineSegment for why this is a plain View, not an SVG <Circle>. */
+/** The tappable ⊕ marker's circle — see LineSegment.tsx for why this is a plain View, not an SVG <Circle>. */
 function MarkerCircle({
   cx,
   cy,
@@ -163,7 +124,7 @@ function DirectionArrow({ cx, cy, dir, dist, color, onPress }: { cx: number; cy:
         opacity: pressed ? 0.5 : 1,
       })}
     >
-      <Text style={{ color, fontSize: 19 }}>{ARROW_GLYPH[dir]}</Text>
+      <Text style={{ color, fontSize: 24 }}>{ARROW_GLYPH[dir]}</Text>
     </Pressable>
   );
 }
@@ -172,26 +133,24 @@ export function TreeCanvas({
   data,
   isRTL,
   editMode,
-  orientation,
   onPersonPress,
   onPersonEdit,
   onMarriagePress,
   onMarriageEdit,
   resetToken,
+  cardStyle,
+  pickPrompt,
+  focusPersonId,
+  showRibbon = true,
+  tapAgainHint,
+  onAddPerson,
+  showMinimap,
   onMovePersonGeneration,
 }: Props) {
   const { t } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const insets = useSafeAreaInsets();
   const containerRef = useRef<View>(null);
-  // Whichever screen axis generations run along — everything below that
-  // measures/maps a point to the screen (content sizing, the initial fit
-  // seed, fitToViewport, toCanvas, the union bars/lines, the generation
-  // arrows) branches on this single flag rather than each independently
-  // guessing which axis means "generation," so there's exactly one place
-  // that decides it.
-  const swap = orientation === 'horizontal';
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   /** Whoever was last tapped — used to gray out unrelated lines and, in edit
    * mode, to reveal that one card's move arrows. */
@@ -209,7 +168,8 @@ export function TreeCanvas({
     return () => clearTimeout(id);
   }, [selectedPersonId]);
 
-  const layout = useMemo(() => computeParentChildLayout(data), [data]);
+  const metrics = CARD_METRICS[cardStyle];
+  const layout = useMemo(() => computeParentChildLayout(data, metrics), [data, metrics]);
   const peopleById = useMemo(() => new Map(data.people.map((p) => [p.id, p])), [data.people]);
 
   // A card's own size (and its name font) grows modestly with the tree's
@@ -227,21 +187,18 @@ export function TreeCanvas({
   // never crowds into its neighboring column; height and font have no such
   // ceiling since rowSpacing is growing right along with them.
   const cardGrowth = Math.min(layout.maxGen, GENERATION_GROWTH_CAP);
-  const cardWidth = Math.min(NODE_WIDTH + cardGrowth * 2, COL_SPACING - 12);
-  const cardHeight = NODE_HEIGHT + cardGrowth * 6;
-  const cardNameFontSize = 16 + cardGrowth * 0.75;
-  const cardAvatarSize = 38 * (cardHeight / NODE_HEIGHT);
+  const cardWidth = Math.min(metrics.nodeWidth + cardGrowth * 2, metrics.colSpacing - 12);
+  const cardHeight = metrics.nodeHeight + cardGrowth * metrics.heightGrowthPerGen;
+  const cardNameFontSize = (cardStyle === 'large' ? 20 : 18) + cardGrowth * 0.75;
+  // Compact: a small round photo beside the name. Large: a big square photo
+  // across the top of the card, leaving room below for the name.
+  const cardAvatarSize = cardStyle === 'large' ? Math.min(cardWidth - 28, cardHeight - 88) : 46 * (cardHeight / metrics.nodeHeight);
 
-  // layout.width/height are always "sibling extent" / "generation extent"
-  // in that order, regardless of orientation — computeParentChildLayout
-  // itself never knows or cares which way the tree will be drawn. Swapping
-  // which one becomes the screen's width vs. height is *the* mechanism
-  // orientation works through; everything below (the fit, toCanvas, the
-  // union bars) just needs to agree on the same `swap` flag.
-  const genExtent = layout.height;
-  const sibExtent = layout.width;
-  const contentWidth = (swap ? genExtent : sibExtent) + CANVAS_PADDING * 2;
-  const contentHeight = (swap ? sibExtent : genExtent) + CANVAS_PADDING * 2;
+  // Generations always run top-to-bottom and siblings left-to-right. Turning
+  // the phone just gives the same tree a wider or taller viewport, which the
+  // viewport-size effect below re-fits to.
+  const contentWidth = layout.width + CANVAS_PADDING * 2;
+  const contentHeight = layout.height + CANVAS_PADDING * 2;
 
   // The real fit-to-viewport effect below only runs once this component's
   // own onLayout has measured its actual size, which is a frame or more
@@ -255,18 +212,18 @@ export function TreeCanvas({
   // comment) — matching it here means the very first paint doesn't briefly
   // show the tree at an illegibly tiny scale before Reset (or the
   // measured-viewport effect) corrects it a frame later.
-  const initialBoundedViewport = swap ? window.width : window.height;
-  const initialBoundedContent = swap ? contentWidth : contentHeight;
-  const initialScale = clamp(initialBoundedViewport / initialBoundedContent, MIN_SCALE, 1);
-  const initialTranslateX = swap ? window.width / 2 - (contentWidth / 2) * initialScale : 0;
-  const initialTranslateY = swap ? 0 : window.height / 2 - (contentHeight / 2) * initialScale;
+  // Only leave room at the top when the minimap is actually there.
+  const topReserve = showMinimap ? MINIMAP_RESERVE : 0;
+  const initialFitHeight = window.height - topReserve;
+  const initialScale = clamp(initialFitHeight / contentHeight, MIN_SCALE, 1);
+  const initialTranslateX = 0;
+  const initialTranslateY = topReserve + initialFitHeight / 2 - (contentHeight / 2) * initialScale;
 
   const scale = useSharedValue(initialScale);
   const translateX = useSharedValue(initialTranslateX);
   const translateY = useSharedValue(initialTranslateY);
-  const savedScale = useSharedValue(1);
-  const savedTranslateX = useSharedValue(0);
-  const savedTranslateY = useSharedValue(0);
+  /** The pinch gesture's own cumulative e.scale as of its previous update — see the pan/pinch comment below. */
+  const lastPinchScale = useSharedValue(1);
 
   // A person's x is their raw cell position from computeParentChildLayout,
   // which can be negative — this shifts everything by -layout.minX before
@@ -275,17 +232,13 @@ export function TreeCanvas({
   // anyone's position *relative* to anyone else, only where the whole tree
   // sits on screen. Mirrored in place for RTL around the tree's true
   // minX/maxX midpoint first, since that midpoint (unlike an assumed
-  // 0..width box) doesn't move when minX does. `swap` transposes the two
-  // logical axes onto the screen last — RTL only ever mirrors the sibling
-  // axis (layout.ts's own x), same as in vertical mode; horizontal mode
-  // doesn't also flip which screen direction generations grow in.
+  // 0..width box) doesn't move when minX does.
   const toCanvas = useCallback(
     (p: { x: number; y: number }) => {
       const lx = (isRTL ? mirrorX(p.x, layout.minX, layout.maxX) : p.x) - layout.minX + CANVAS_PADDING;
-      const ly = p.y + CANVAS_PADDING;
-      return swap ? { x: ly, y: lx } : { x: lx, y: ly };
+      return { x: lx, y: p.y + CANVAS_PADDING };
     },
-    [isRTL, layout.minX, layout.maxX, swap]
+    [isRTL, layout.minX, layout.maxX]
   );
 
   const fitToViewport = useCallback(
@@ -297,26 +250,27 @@ export function TreeCanvas({
       const vw = viewport.width || window.width;
       const vh = viewport.height || window.height;
       if (vw === 0 || vh === 0 || contentWidth === 0 || contentHeight === 0) return;
-      // Fit by the *generation* axis alone, not the narrower of width/height
+      // Fit by height (the generation axis) alone, not the narrower of width/height
       // — a tree's generation count is bounded (a handful of rows), but its
       // sibling extent grows without bound as people are added, so fitting
       // to the sibling axis on a tree wide enough (a real, previously-
       // shipped bug: a ~70-person tree needed scale 0.04 to fit its whole
       // ~9000px width, which shrinks a 140×72 card to about 6×3 screen
       // pixels — invisible, not just small) would do the same thing here.
-      // Which screen dimension is the generation axis flips with
-      // orientation — vertical fits by screen height, horizontal by screen
-      // width — but the axis being fit is always the same, bounded one.
       // Exploring the unbounded sibling axis is what panning is for;
       // Reset's job is to land at a scale where cards are actually legible,
       // pinned to the tree's own start edge on that axis so it's a real
       // root family in view, not an arbitrary cross-section from the
       // geometric middle of a wide, unevenly-populated tree.
-      const boundedViewport = swap ? vw : vh;
-      const boundedContent = swap ? contentWidth : contentHeight;
-      const fitScale = clamp(boundedViewport / boundedContent, MIN_SCALE, 1);
-      const tx = swap ? vw / 2 - (contentWidth / 2) * fitScale : 0;
-      const ty = swap ? 0 : vh / 2 - (contentHeight / 2) * fitScale;
+      // Fit into the part of the canvas below the minimap, so the oldest
+      // generation doesn't start out hidden underneath it.
+      const fitHeight = Math.max(vh - topReserve, vh / 2);
+      const fitScale = clamp(fitHeight / contentHeight, MIN_SCALE, 1);
+      // Centered on the focus person when there is one; otherwise pinned to
+      // the tree's own start edge (see above).
+      const focusPos = focusPersonId ? layout.positions.get(focusPersonId) : undefined;
+      const tx = focusPos ? vw / 2 - toCanvas(focusPos).x * fitScale : 0;
+      const ty = vh - fitHeight + fitHeight / 2 - (contentHeight / 2) * fitScale;
       // withTiming was the one call in this whole file that never actually
       // landed on a real device (a real, previously-shipped bug) — the
       // initial, un-animated fit on mount (which just assigns .value
@@ -326,27 +280,32 @@ export function TreeCanvas({
       // documentation at each call site (mount vs. explicit reset).
       void animated;
       scale.value = fitScale;
-      translateX.value = tx;
-      translateY.value = ty;
+      translateX.value = clampAxis(tx, contentWidth, vw, fitScale);
+      translateY.value = clampAxis(ty, contentHeight, vh, fitScale);
     },
-    [viewport, contentWidth, contentHeight, window.width, window.height, swap]
+    [viewport, contentWidth, contentHeight, window.width, window.height, topReserve, focusPersonId, layout, toCanvas]
   );
 
-  // Initial fit, once the canvas has been measured.
+  useEffect(() => {
+    if (!focusPersonId) return;
+    setSelectedPersonId(focusPersonId);
+    fitToViewport(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusPersonId]);
+
+  // The whole tree changes size with the card style, so the old camera
+  // would point at the wrong place; start again from a fresh fit.
+  useEffect(() => {
+    fitToViewport(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardStyle]);
+
+  // Initial fit, once the canvas has been measured — and again whenever its
+  // size changes, e.g. when the phone is rotated.
   useEffect(() => {
     fitToViewport(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewport.width, viewport.height]);
-
-  // Flipping orientation transposes the whole tree — the camera's current
-  // scale/pan describes a completely different geometry the instant this
-  // changes, not just a stale-but-still-valid view of the same one, so
-  // this re-fits immediately rather than leaving the tree wherever the old
-  // orientation's numbers happen to place it under the new one.
-  useEffect(() => {
-    fitToViewport(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orientation]);
 
   // Defensive retry: onLayout should always fire after mount, but if it
   // somehow doesn't (or reports 0 on some device/build), re-measure the
@@ -367,6 +326,21 @@ export function TreeCanvas({
   // scrolling over the canvas did nothing (or scrolled the page). react-native-web
   // forwards a View's ref to its underlying DOM node, so this attaches a real
   // 'wheel' listener and zooms around the cursor, matching the pinch math below.
+  // The wheel listener below is attached once, so it reads the tree's
+  // current size through this ref rather than a stale closure.
+  const boundsRef = useRef({ cw: contentWidth, ch: contentHeight });
+  boundsRef.current = { cw: contentWidth, ch: contentHeight };
+
+  // When the tree shrinks (someone deleted, a new import) or the screen
+  // turns, the camera may now sit outside the tree's area; pull it back in.
+  useEffect(() => {
+    const vw = viewport.width || window.width;
+    const vh = viewport.height || window.height;
+    translateX.value = clampAxis(translateX.value, contentWidth, vw, scale.value);
+    translateY.value = clampAxis(translateY.value, contentHeight, vh, scale.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentWidth, contentHeight, viewport.width, viewport.height]);
+
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const node = containerRef.current as unknown as HTMLElement | null;
@@ -379,8 +353,8 @@ export function TreeCanvas({
       const focalY = e.clientY - rect.top;
       const zoomFactor = Math.exp(-e.deltaY * 0.0015);
       const next = clamp(scale.value * zoomFactor, MIN_SCALE, MAX_SCALE);
-      translateX.value = focalX - ((focalX - translateX.value) * next) / scale.value;
-      translateY.value = focalY - ((focalY - translateY.value) * next) / scale.value;
+      translateX.value = clampAxis(focalX - ((focalX - translateX.value) * next) / scale.value, boundsRef.current.cw, rect.width, next);
+      translateY.value = clampAxis(focalY - ((focalY - translateY.value) * next) / scale.value, boundsRef.current.ch, rect.height, next);
       scale.value = next;
     };
 
@@ -389,58 +363,62 @@ export function TreeCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Explicit reset (parent bumps resetToken, e.g. the Reset button, or after import).
-  useEffect(() => {
-    if (resetToken === 0) return;
+  // Clears any selection and re-fits the tree — shared by the on-canvas ↻
+  // button and the parent's resetToken (e.g. after an import).
+  const resetView = () => {
     setSelectedPersonId(undefined);
     setSelectedMarriageId(undefined);
     fitToViewport(true);
+  };
+
+  useEffect(() => {
+    if (resetToken === 0) return;
+    resetView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetToken]);
 
+  // Pan and pinch run simultaneously, so both apply *incremental* changes to
+  // the camera rather than recomputing it from a saved start snapshot. The
+  // snapshot version (a real, previously-shipped bug) had each gesture
+  // overwrite the other's work on every frame — pan reset translate to
+  // "start + finger travel", discarding pinch's focal-point correction, then
+  // pinch reset it back, and they also clobbered each other's shared saved
+  // start value whenever one began mid-way through the other. The visible
+  // result was the camera sliding sideways on every zoom. Now pan owns
+  // movement (its changeX/changeY already track the fingers' midpoint) and
+  // pinch owns only zooming around the current focal point.
+  const boundsWidth = viewport.width || window.width;
+  const boundsHeight = viewport.height || window.height;
   const pan = Gesture.Pan()
-    .onStart(() => {
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
-    })
-    .onUpdate((e) => {
-      translateX.value = savedTranslateX.value + e.translationX;
-      translateY.value = savedTranslateY.value + e.translationY;
+    .averageTouches(true)
+    .onChange((e) => {
+      translateX.value = clampAxis(translateX.value + e.changeX, contentWidth, boundsWidth, scale.value);
+      translateY.value = clampAxis(translateY.value + e.changeY, contentHeight, boundsHeight, scale.value);
     });
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
-      savedScale.value = scale.value;
-      savedTranslateX.value = translateX.value;
-      savedTranslateY.value = translateY.value;
+      lastPinchScale.value = 1;
     })
     .onUpdate((e) => {
-      const next = clamp(savedScale.value * e.scale, MIN_SCALE, MAX_SCALE);
-      translateX.value = e.focalX - ((e.focalX - savedTranslateX.value) * next) / savedScale.value;
-      translateY.value = e.focalY - ((e.focalY - savedTranslateY.value) * next) / savedScale.value;
+      const factor = e.scale / lastPinchScale.value;
+      lastPinchScale.value = e.scale;
+      const next = clamp(scale.value * factor, MIN_SCALE, MAX_SCALE);
+      const applied = next / scale.value;
+      translateX.value = clampAxis(e.focalX - (e.focalX - translateX.value) * applied, contentWidth, boundsWidth, next);
+      translateY.value = clampAxis(e.focalY - (e.focalY - translateY.value) * applied, contentHeight, boundsHeight, next);
       scale.value = next;
     });
 
   const composedGesture = Gesture.Simultaneous(pan, pinch);
 
-  // Half the card's screen extent along whichever axis generations run
-  // along — the distance from a card's center to the edge facing the next
-  // (or previous) generation. The card itself never rotates with
-  // orientation, so this is the only thing that has to: a card's "forward"
-  // edge is its bottom in vertical mode, its right side in horizontal mode.
-  const genCardHalf = swap ? cardWidth / 2 : cardHeight / 2;
-  // The screen point one card-edge's distance from `p`, toward the next
-  // generation (dir=1, e.g. a spouse's card down/across to the marriage
-  // bar) or the previous one (dir=-1, e.g. a child's card back up/across
-  // to its parents' marker).
-  const genEdge = useCallback((p: { x: number; y: number }, dir: 1 | -1) => (swap ? { x: p.x + dir * genCardHalf, y: p.y } : { x: p.x, y: p.y + dir * genCardHalf }), [swap, genCardHalf]);
-  // A point on a marriage's bar, level with `p` along the sibling axis —
-  // the bar itself sits at one fixed generation-axis coordinate
-  // (`genScreen`, shared by both spouses and their marker) but spans
-  // however far apart the two spouses are along the sibling axis, so this
-  // is what makes it a horizontal line in vertical mode and a vertical one
-  // in horizontal mode.
-  const barPoint = useCallback((genScreen: number, p: { x: number; y: number }) => (swap ? { x: genScreen, y: p.y } : { x: p.x, y: genScreen }), [swap]);
+  // The point on a card's bottom edge (dir=1, e.g. a spouse's card down to
+  // the marriage bar) or top edge (dir=-1, e.g. a child's card back up to
+  // its parents' marker).
+  const genEdge = useCallback((p: { x: number; y: number }, dir: 1 | -1) => ({ x: p.x, y: p.y + dir * (cardHeight / 2) }), [cardHeight]);
+  // A point on a marriage's horizontal bar (at height `genScreen`), directly
+  // below `p`.
+  const barPoint = useCallback((genScreen: number, p: { x: number; y: number }) => ({ x: p.x, y: genScreen }), []);
 
   // Every translateX/translateY this file computes (fitToViewport, the
   // pinch/wheel focal-point math, the initial seed) assumes a plain
@@ -475,11 +453,52 @@ export function TreeCanvas({
     ],
   }));
 
+  const minimapCards = useMemo<MinimapCard[]>(
+    () =>
+      data.people.flatMap((person) => {
+        const pos = layout.positions.get(person.id);
+        return pos ? [{ id: person.id, ...toCanvas(pos), color: cardColors(person, theme).stroke }] : [];
+      }),
+    [data.people, layout.positions, toCanvas, theme]
+  );
+  // The same lines the canvas draws: each spouse's drop to the marriage
+  // bar, the bar itself, and the links down to each child.
+  const minimapLines = useMemo<MinimapLine[]>(
+    () =>
+      layout.unions.flatMap((u) => {
+        const posA = layout.positions.get(u.marriage.spouseIds[0]);
+        const posB = layout.positions.get(u.marriage.spouseIds[1]);
+        if (!posA || !posB) return [];
+        const marker = toCanvas({ x: u.markerX, y: u.markerY });
+        const a = toCanvas(posA);
+        const b = toCanvas(posB);
+        const aEdge = genEdge(a, 1);
+        const bEdge = genEdge(b, 1);
+        const couple = [
+          { x1: aEdge.x, y1: aEdge.y, x2: a.x, y2: marker.y },
+          { x1: bEdge.x, y1: bEdge.y, x2: b.x, y2: marker.y },
+          { x1: a.x, y1: marker.y, x2: b.x, y2: marker.y },
+        ];
+        const children = u.marriage.childIds.flatMap((childId) => {
+          const childPos = layout.positions.get(childId);
+          if (!childPos) return [];
+          const cEdge = genEdge(toCanvas(childPos), -1);
+          return [{ x1: marker.x, y1: marker.y, x2: cEdge.x, y2: cEdge.y }];
+        });
+        return [...couple, ...children];
+      }),
+    [layout, toCanvas, genEdge]
+  );
+
   // First tap on a card just selects it — highlighting its own lines and,
   // in view mode, recentering the tree on it. Only a second tap on that same
   // (already-selected) card opens the info sheet / edit form. Tapping a
   // different card always counts as a fresh first tap for that one.
   const handlePersonPress = (person: Person) => {
+    if (pickPrompt) {
+      pickPrompt.onPick(person);
+      return;
+    }
     const alreadySelected = selectedPersonId === person.id;
 
     if (editMode) {
@@ -545,9 +564,8 @@ export function TreeCanvas({
               // The bar's fixed generation-axis screen coordinate — read
               // off the marker rather than recomputed from u.barY, since
               // buildUnions always sets markerY exactly equal to barY (the
-              // marker sits on the bar) and toCanvas has already resolved
-              // which screen axis that lands on for this orientation.
-              const genScreen = swap ? marker.x : marker.y;
+              // marker sits on the bar).
+              const genScreen = marker.y;
               const aEdge = genEdge(a, 1);
               const bEdge = genEdge(b, 1);
               const aBar = barPoint(genScreen, a);
@@ -565,9 +583,9 @@ export function TreeCanvas({
 
               return (
                 <React.Fragment key={u.marriage.id}>
-                  <LineSegment x1={aEdge.x} y1={aEdge.y} x2={aBar.x} y2={aBar.y} color={color} strokeWidth={2} dashed={dashed} />
-                  <LineSegment x1={bEdge.x} y1={bEdge.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={2} dashed={dashed} />
-                  <LineSegment x1={aBar.x} y1={aBar.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={2} dashed={dashed} />
+                  <LineSegment x1={aEdge.x} y1={aEdge.y} x2={aBar.x} y2={aBar.y} color={color} strokeWidth={3} dashed={dashed} />
+                  <LineSegment x1={bEdge.x} y1={bEdge.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={3} dashed={dashed} />
+                  <LineSegment x1={aBar.x} y1={aBar.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={3} dashed={dashed} />
                   {u.marriage.childIds.map((childId) => {
                     const childPos = layout.positions.get(childId);
                     if (!childPos) return null;
@@ -582,13 +600,13 @@ export function TreeCanvas({
                         x2={cEdge.x}
                         y2={cEdge.y}
                         color={childConnected ? theme.lineBlood : theme.stroke}
-                        strokeWidth={1.8}
+                        strokeWidth={2.8}
                       />
                     );
                   })}
-                  <MarkerCircle cx={marker.x} cy={marker.y} r={11} fill={theme.panel2} stroke={color} strokeWidth={1.8} />
-                  <LineSegment x1={marker.x - 5} y1={marker.y} x2={marker.x + 5} y2={marker.y} color={color} strokeWidth={1.8} />
-                  <LineSegment x1={marker.x} y1={marker.y - 5} x2={marker.x} y2={marker.y + 5} color={color} strokeWidth={1.8} />
+                  <MarkerCircle cx={marker.x} cy={marker.y} r={MARKER_RADIUS} fill={theme.panel2} stroke={color} strokeWidth={3.5} />
+                  <LineSegment x1={marker.x - 13} y1={marker.y} x2={marker.x + 13} y2={marker.y} color={color} strokeWidth={4.5} />
+                  <LineSegment x1={marker.x} y1={marker.y - 13} x2={marker.x} y2={marker.y + 13} color={color} strokeWidth={4.5} />
                 </React.Fragment>
               );
             })}
@@ -628,6 +646,9 @@ export function TreeCanvas({
                 width={cardWidth}
                 height={cardHeight}
                 nameFontSize={cardNameFontSize}
+                cardStyle={cardStyle}
+                isRTL={isRTL}
+                showRibbon={showRibbon}
                 avatarSize={cardAvatarSize}
                 isSelected={isSelected}
                 colors={cardColors(person, theme)}
@@ -660,24 +681,18 @@ export function TreeCanvas({
               freshly added parent can land several rows above their child
               with nothing in between; nudging it down with these arrows
               (which just set manualGeneration) is the way to fix that by
-              hand. The arrows themselves point along whichever screen axis
-              generations actually run on — up/down when vertical,
-              left/right when horizontal — even though the underlying
-              "earlier"/"later" direction they report to
-              onMovePersonGeneration never changes. */}
+              hand. */}
           {editMode &&
             selectedPersonId &&
             (() => {
               const pos = layout.positions.get(selectedPersonId);
               if (!pos) return null;
               const c = toCanvas(pos);
-              const genArrowDist = (swap ? cardWidth : cardHeight) / 2 + 22;
-              const earlierDir = swap ? 'left' : 'up';
-              const laterDir = swap ? 'right' : 'down';
+              const genArrowDist = cardHeight / 2 + 22;
               return (
                 <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-                  <DirectionArrow cx={c.x} cy={c.y} dir={earlierDir} dist={genArrowDist} color={theme.lineMarriage} onPress={() => onMovePersonGeneration(selectedPersonId, 'up')} />
-                  <DirectionArrow cx={c.x} cy={c.y} dir={laterDir} dist={genArrowDist} color={theme.lineMarriage} onPress={() => onMovePersonGeneration(selectedPersonId, 'down')} />
+                  <DirectionArrow cx={c.x} cy={c.y} dir="up" dist={genArrowDist} color={theme.lineMarriage} onPress={() => onMovePersonGeneration(selectedPersonId, 'up')} />
+                  <DirectionArrow cx={c.x} cy={c.y} dir="down" dist={genArrowDist} color={theme.lineMarriage} onPress={() => onMovePersonGeneration(selectedPersonId, 'down')} />
                 </View>
               );
             })()}
@@ -685,10 +700,55 @@ export function TreeCanvas({
         </View>
       </GestureDetector>
 
-      {selectedPersonId && showHint && (
-        <View style={[styles.hintBar, { bottom: 18 + insets.bottom }]} pointerEvents="none">
-          <Text style={styles.hintText}>{editMode ? t('tapAgainToEdit') : t('tapAgainForInfo')}</Text>
+      {pickPrompt ? (
+        <View style={[styles.pickBanner, isRTL && styles.pickBannerRTL]}>
+          <Text style={styles.pickBannerText}>{pickPrompt.message}</Text>
+          <Pressable onPress={pickPrompt.onCancel} hitSlop={8} style={({ pressed }) => pressed && { opacity: 0.6 }}>
+            <Text style={styles.pickBannerCancel}>{pickPrompt.cancelLabel}</Text>
+          </Pressable>
         </View>
+      ) : showMinimap && (
+      <Minimap
+        contentWidth={contentWidth}
+        contentHeight={contentHeight}
+        cards={minimapCards}
+        lines={minimapLines}
+        cardWidth={cardWidth}
+        cardHeight={cardHeight}
+        viewport={viewport}
+        scale={scale}
+        translateX={translateX}
+        translateY={translateY}
+        selectedId={selectedPersonId}
+        isRTL={isRTL}
+        theme={theme}
+      />
+      )}
+
+      {selectedPersonId && showHint && (
+        <View style={styles.hintBar} pointerEvents="none">
+          <Text style={styles.hintText}>{tapAgainHint ?? (editMode ? t('tapAgainToEdit') : t('tapAgainForInfo'))}</Text>
+        </View>
+      )}
+
+      <Pressable
+        style={({ pressed }) => [styles.resetButton, isRTL ? styles.cornerLeft : styles.cornerRight, pressed && styles.resetButtonPressed]}
+        onPress={resetView}
+        accessibilityLabel={t('resetView')}
+        hitSlop={6}
+      >
+        <Text style={styles.resetButtonText}>↻</Text>
+      </Pressable>
+
+      {editMode && (
+        <Pressable
+          style={({ pressed }) => [styles.resetButton, styles.addButton, isRTL ? styles.cornerRight : styles.cornerLeft, pressed && styles.resetButtonPressed]}
+          onPress={onAddPerson}
+          accessibilityLabel={t('addPerson')}
+          hitSlop={6}
+        >
+          <Text style={[styles.resetButtonText, styles.addButtonText]}>+</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -707,6 +767,9 @@ function PersonCard({
   height,
   nameFontSize,
   avatarSize,
+  cardStyle,
+  isRTL,
+  showRibbon,
   isSelected,
   colors,
   onPress,
@@ -722,6 +785,9 @@ function PersonCard({
   height: number;
   nameFontSize: number;
   avatarSize: number;
+  cardStyle: CardStyle;
+  isRTL: boolean;
+  showRibbon: boolean;
   isSelected: boolean;
   colors: { fill: string; stroke: string };
   onPress: (person: Person) => void;
@@ -740,23 +806,51 @@ function PersonCard({
           width,
           height,
           borderColor: isSelected ? theme.selected : colors.stroke,
-          borderWidth: isSelected ? 2.2 : person.unknown ? 1.4 : 1,
+          borderWidth: isSelected ? 2.5 : person.unknown ? 1.5 : 1,
           borderStyle: person.unknown ? 'dashed' : 'solid',
-          backgroundColor: colors.fill,
+          // Selected turns the whole card green, not just its outline.
+          backgroundColor: isSelected ? theme.selectedFill : colors.fill,
+          // See raisedCardStyle. An unknown person's card stays flat, as a placeholder.
+          ...(person.unknown ? null : raisedCardStyle(isSelected ? theme.selectedFill : colors.fill, theme)),
         },
       ]}
     >
-      <Pressable style={({ pressed }) => [styles.cardTouchable, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
-        {person.photoUri && (
-          <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]} />
-        )}
-        <Text
-          numberOfLines={1}
-          style={[styles.cardName, { fontSize: nameFontSize }, person.unknown && { color: theme.inkFaint, fontSize: nameFontSize * 0.75 }]}
-        >
-          {person.unknown ? unknownLabel : person.name}
-        </Text>
-      </Pressable>
+      {cardStyle === 'large' ? (
+        <Pressable style={({ pressed }) => [styles.cardTouchableLarge, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
+          {person.photoUri ? (
+            <Image source={{ uri: person.photoUri }} style={[styles.cardPhotoLarge, { width: avatarSize, height: avatarSize }]} />
+          ) : (
+            // No photo yet: the same square, holding their initial.
+            <View style={[styles.cardPhotoLarge, styles.cardPhotoPlaceholder, { width: avatarSize, height: avatarSize, borderColor: colors.stroke }]}>
+              <Text style={[styles.cardInitial, { color: colors.stroke, fontSize: avatarSize * 0.42 }]}>{person.unknown ? '?' : person.name.charAt(0)}</Text>
+            </View>
+          )}
+          <Text
+            numberOfLines={1}
+            style={[styles.cardName, styles.cardNameLarge, { fontSize: nameFontSize }, person.unknown && { color: theme.inkFaint, fontSize: nameFontSize * 0.8 }]}
+          >
+            {person.unknown ? unknownLabel : person.name}
+          </Text>
+          {!person.unknown && !!person.surname && (
+            <Text numberOfLines={1} style={[styles.cardSurname, { fontSize: nameFontSize * 0.7 }]}>
+              {person.surname}
+            </Text>
+          )}
+        </Pressable>
+      ) : (
+        <Pressable style={({ pressed }) => [styles.cardTouchable, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
+          {person.photoUri && (
+            <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]} />
+          )}
+          <Text
+            numberOfLines={1}
+            style={[styles.cardName, { fontSize: nameFontSize }, person.unknown && { color: theme.inkFaint, fontSize: nameFontSize * 0.75 }]}
+          >
+            {person.unknown ? unknownLabel : person.name}
+          </Text>
+        </Pressable>
+      )}
+      {showRibbon && isDeceased(person) && <MourningRibbon radius={15} side="left" thickness={cardStyle === 'large' ? 16 : 11} />}
     </Animated.View>
   );
 }
@@ -775,7 +869,7 @@ function createStyles(theme: Theme) {
     position: 'absolute',
     width: NODE_WIDTH,
     height: NODE_HEIGHT,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     // react-native-web only: without this, a click-drag over a card starts the
@@ -793,23 +887,84 @@ function createStyles(theme: Theme) {
     paddingHorizontal: 8,
   },
   cardTouchablePressed: { opacity: 0.6 },
-  cardAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.panel },
+  cardTouchableLarge: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 14,
+    paddingHorizontal: 10,
+  },
+  cardPhotoLarge: { borderRadius: 14, backgroundColor: theme.panel },
+  cardPhotoPlaceholder: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, opacity: 0.9 },
+  cardInitial: { fontWeight: '700' },
+  cardNameLarge: { marginTop: 10, textAlign: 'center' },
+  cardSurname: { color: theme.inkDim, fontWeight: '600', marginTop: 1, textAlign: 'center' },
+  cardAvatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.panel },
   cardName: {
     color: theme.ink,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     flexShrink: 1,
     ...(Platform.OS === 'web' ? ({ userSelect: 'none' } as object) : null),
   },
+  // Inset on both sides by more than the ↻ button's footprint, so a long
+  // hint wraps instead of running under that button.
   hintBar: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    bottom: 18,
+    left: 80,
+    right: 80,
     alignItems: 'center',
   },
+  resetButton: {
+    position: 'absolute',
+    bottom: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.panel2,
+    borderWidth: 1,
+    borderColor: theme.stroke,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  pickBanner: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: theme.panel,
+    borderWidth: 1.5,
+    borderColor: theme.selected,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    boxShadow: `0px 4px 12px ${theme.cardShadow}`,
+  },
+  pickBannerRTL: { flexDirection: 'row-reverse' },
+  pickBannerText: { flex: 1, color: theme.ink, fontSize: 14, fontWeight: '600' },
+  pickBannerCancel: { color: theme.lineEnded, fontSize: 13.5, fontWeight: '700' },
+  cornerRight: { right: 16 },
+  cornerLeft: { left: 16 },
+  resetButtonPressed: { opacity: 0.55 },
+  // Same round button as ↻, filled in the edit-mode accent so it reads as
+  // the one edit action, not another view control.
+  addButton: { backgroundColor: theme.lineMarriage, borderColor: theme.lineMarriage },
+  addButtonText: { color: theme.bg, fontSize: 28, lineHeight: 32 },
+  resetButtonText: { color: theme.ink, fontSize: 24, fontWeight: '700', lineHeight: 28 },
   hintText: {
     color: theme.inkDim,
     fontSize: 12.5,
+    textAlign: 'center',
     backgroundColor: theme.panel2,
     borderWidth: 1,
     borderColor: theme.stroke,

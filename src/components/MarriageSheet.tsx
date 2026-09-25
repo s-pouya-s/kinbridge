@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Modal, Pressable, Text, View, StyleSheet } from 'react-native';
 import type { Marriage, Person } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 
@@ -19,14 +20,17 @@ export function MarriageSheet({ marriage, people, visible, onClose }: Props) {
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Modals draw edge-to-edge too, so the sheet adds the system bars' own
+  // insets itself — otherwise its last row sits under the back/home bar.
+  const insets = useSafeAreaInsets();
   const byId = new Map(people.map((p) => [p.id, p]));
   const spouseA = marriage ? byId.get(marriage.spouseIds[0]) : undefined;
   const spouseB = marriage ? byId.get(marriage.spouseIds[1]) : undefined;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <Pressable style={[styles.backdrop, { paddingTop: insets.top }]} onPress={onClose}>
+        <Pressable style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]} onPress={(e) => e.stopPropagation()}>
           {marriage && spouseA && spouseB && (
             <>
               <View style={[styles.header, isRTL && styles.rowRTL]}>

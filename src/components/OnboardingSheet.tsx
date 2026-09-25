@@ -41,12 +41,12 @@ export function OnboardingSheet({ visible, onClose }: Props) {
   const maxSheetHeight = window.height * 0.85;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see
           PersonSheet's comment on why nesting the ScrollView inside a
           Pressable made scrolling fight the backdrop for touch-responder
           status. */}
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { maxHeight: maxSheetHeight }]}>
           <ScrollView
@@ -57,7 +57,7 @@ export function OnboardingSheet({ visible, onClose }: Props) {
             // doesn't know about either, so without adding insets.bottom
             // here, the "Got it" button ended up drawn right underneath
             // it: visible enough to see, but not reliably tappable.
-            contentContainerStyle={[styles.content, { paddingBottom: 36 + insets.bottom }]}
+            contentContainerStyle={[styles.content, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}
           >
             <Text style={[styles.title, isRTL && styles.textEnd]}>{t('onboardingTitle')}</Text>
             <Text style={[styles.intro, isRTL && styles.textEnd]}>{t('onboardingIntro')}</Text>

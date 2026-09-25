@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { ID, Marriage, MarriageStatus, Person } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PersonPicker } from './PersonPicker';
+import { orderedChildIds } from '../layout/siblings';
+import { DraggableChildList } from './DraggableChildList';
 
 interface Props {
   marriage: Marriage | null;
@@ -17,12 +21,19 @@ interface Props {
   /** Adds someone already in the tree as a child of this marriage instead of creating a new one. */
   onAddExistingChild: (existingPersonId: ID) => void;
   onRemoveChild: (childId: string) => void;
+  /** Every child's id in a new, hand-set order, oldest first. */
+  onReorderChildren: (ids: string[]) => void;
+  /** Back to sorting the children by birth date. */
+  onResetChildOrder: () => void;
 }
 
-export function MarriageEditSheet({ marriage, people, visible, canDelete, onClose, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild }: Props) {
+export function MarriageEditSheet({ marriage, people, visible, canDelete, onClose, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild, onReorderChildren, onResetChildOrder }: Props) {
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Modals draw edge-to-edge too, so the sheet adds the system bars' own
+  // insets itself — otherwise its last row sits under the back/home bar.
+  const insets = useSafeAreaInsets();
   const [childPickerOpen, setChildPickerOpen] = useState(false);
   const [status, setStatus] = useState<MarriageStatus>('current');
   const [marriedYear, setMarriedYear] = useState('');
@@ -49,13 +60,16 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={styles.backdrop}>
+      {/* A Modal's content lives outside the app's own gesture root on
+          Android, so the draggable children list needs one of its own. */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Field styles={styles} label={t('status')} isRTL={isRTL}>
               <View style={[styles.segmented, isRTL && styles.rowRTL]}>
@@ -77,17 +91,24 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
 
             <Field styles={styles} label={t('children', { count: marriage.childIds.length })} isRTL={isRTL}>
               {marriage.childIds.length === 0 && <Text style={[styles.emptyHint, isRTL && styles.textEnd]}>{t('noChildrenYet')}</Text>}
-              {marriage.childIds.map((childId) => {
-                const child = byId.get(childId);
-                return (
-                  <View key={childId} style={[styles.childRow, isRTL && styles.rowRTL]}>
-                    <Text style={styles.childName}>{child?.name ?? t('unknown')}</Text>
-                    <Pressable onPress={() => onRemoveChild(childId)}>
-                      <Text style={styles.childRemove}>{t('remove')}</Text>
-                    </Pressable>
-                  </View>
-                );
-              })}
+              {marriage.childIds.length > 1 && (
+                <Text style={[styles.emptyHint, isRTL && styles.textEnd]}>{t('childOrderHint')}</Text>
+              )}
+              {/* In the same order as on the tree, oldest first. */}
+              <DraggableChildList
+                items={orderedChildIds(marriage, byId).map((id) => ({ id, label: byId.get(id)?.name ?? t('unknown') }))}
+                onReorder={onReorderChildren}
+                onRemove={onRemoveChild}
+                removeLabel={t('remove')}
+                dragLabel={t('dragToReorder')}
+                isRTL={isRTL}
+                theme={theme}
+              />
+              {marriage.manualChildOrder && (
+                <Pressable onPress={onResetChildOrder} style={styles.resetOrder}>
+                  <Text style={[styles.resetOrderText, isRTL && styles.textEnd]}>{t('sortByBirthDate')}</Text>
+                </Pressable>
+              )}
               <View style={[styles.row, isRTL && styles.rowRTL]}>
                 <Pressable style={[styles.secondaryButton, { flex: 1 }]} onPress={onAddChild}>
                   <Text style={styles.secondaryButtonText}>{t('createPerson')}</Text>
@@ -123,6 +144,7 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
           onAddExistingChild(existingId);
         }}
       />
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -193,17 +215,8 @@ function createStyles(theme: Theme) {
   segButton: { flex: 1, borderWidth: 1, borderColor: theme.stroke, borderRadius: 10, paddingVertical: 9, alignItems: 'center', backgroundColor: theme.panel2 },
   segButtonText: { color: theme.inkDim, fontSize: 13, fontWeight: '600' },
   emptyHint: { color: theme.inkFaint, fontSize: 12.5, marginBottom: 8 },
-  childRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: theme.panel2,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    marginBottom: 8,
-  },
-  childName: { color: theme.ink, fontSize: 13.5 },
+  resetOrder: { alignSelf: 'flex-start', paddingVertical: 4, marginBottom: 8 },
+  resetOrderText: { color: theme.lineMarriage, fontSize: 12.5, fontWeight: '600' },
   childRemove: { color: theme.lineEnded, fontSize: 12.5, fontWeight: '600' },
   primaryButton: { backgroundColor: theme.lineMarriage, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 6 },
   primaryButtonText: { color: theme.bg, fontSize: 14, fontWeight: '700' },

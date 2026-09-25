@@ -1,3 +1,4 @@
+import { orderedChildIds } from './siblings';
 import type { FamilyData, ID, Marriage, Person } from '../types';
 
 /**
@@ -58,12 +59,7 @@ export function computeRowOrder(
         for (const m of marriagesByPerson.get(personId) ?? []) {
           if (emittedUnits.has(m.id)) continue;
           emittedUnits.add(m.id);
-          const children = m.childIds
-            .filter((cid) => generations.get(cid) === g)
-            .slice()
-            // born is a "YYYY-MM-DD" ISO string, which sorts correctly lexicographically —
-            // no need to parse it. Unknown birth dates sort last.
-            .sort((a, b) => (peopleById.get(a)?.born ?? '9999-99-99').localeCompare(peopleById.get(b)?.born ?? '9999-99-99'));
+          const children = orderedChildIds(m, peopleById).filter((cid) => generations.get(cid) === g);
           for (const cid of children) insertWithSpouses(cid, thisRow, placed, spousesByPerson);
         }
       }

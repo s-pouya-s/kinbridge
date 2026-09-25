@@ -1,23 +1,42 @@
+import { orderedChildIds } from '../layout/siblings';
 import type { FamilyData, ID, Marriage, Person } from '../types';
 import { computeGenerations } from '../layout/generations';
 import { computeRowOrder } from '../layout/order';
+import { computeParentChildLayout } from '../layout/parentChildLayout';
 
 export function newId(prefix: string): ID {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-/** "New person 1", "New person 2", ... — never reused, even across sessions or after renames/deletes, since it's always one past the highest number already present in `people`. Keeps multiple not-yet-named cards from all reading as an identical, indistinguishable "New person". */
+/**
+ * What a newly added person is called, in the app's current language:
+ * "New person" in English, «فرد جدید» in Persian. Mutations stay free of the
+ * i18n layer, so the app hands this in; left out, it's English.
+ */
+export interface NewPersonName {
+  label: string;
+  /** Turns the running number into digits for this language (Persian uses ۰-۹). */
+  formatNumber?: (n: number) => string;
+}
+const ENGLISH_NEW_PERSON: NewPersonName = { label: 'New person' };
+
+/** Every label a placeholder name has ever used, so numbering continues across a language switch. */
+const PLACEHOLDER_NAME = /^(?:New person|فرد جدید) ([0-9۰-۹]+)$/;
+const toAsciiDigits = (s: string) => s.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+
+/** "New person 1", "New person 2", ... — never reused, even across sessions or after renames/deletes, since it's always one past the highest number already present in `people`, whichever language that name was made in. Keeps multiple not-yet-named cards from all reading as an identical, indistinguishable "New person". */
 function nextBlankPersonNumber(people: Person[]): number {
   let max = 0;
   for (const p of people) {
-    const match = /^New person (\d+)$/.exec(p.name ?? '');
-    if (match) max = Math.max(max, Number(match[1]));
+    const match = PLACEHOLDER_NAME.exec(p.name ?? '');
+    if (match) max = Math.max(max, Number(toAsciiDigits(match[1])));
   }
   return max + 1;
 }
 
-function blankPerson(people: Person[]): Person {
-  return { id: newId('p'), name: `New person ${nextBlankPersonNumber(people)}` };
+function blankPerson(people: Person[], naming: NewPersonName = ENGLISH_NEW_PERSON): Person {
+  const n = nextBlankPersonNumber(people);
+  return { id: newId('p'), name: `${naming.label} ${naming.formatNumber ? naming.formatNumber(n) : n}` };
 }
 
 /**
@@ -53,8 +72,8 @@ function pinIntoManualRowIfNeeded(data: FamilyData, personId: ID): FamilyData {
   return { ...data, people: data.people.map((p) => (p.id === personId ? { ...p, manualOrder: cell } : p)) };
 }
 
-export function addStandalonePerson(data: FamilyData): { data: FamilyData; person: Person } {
-  const person = blankPerson(data.people);
+export function addStandalonePerson(data: FamilyData, naming?: NewPersonName): { data: FamilyData; person: Person } {
+  const person = blankPerson(data.people, naming);
   return { data: { ...data, people: [...data.people, person] }, person };
 }
 
@@ -82,8 +101,8 @@ export function deletePerson(data: FamilyData, personId: ID): FamilyData {
   };
 }
 
-export function addSpouse(data: FamilyData, personId: ID): { data: FamilyData; person: Person; marriage: Marriage } {
-  const person = blankPerson(data.people);
+export function addSpouse(data: FamilyData, personId: ID, naming?: NewPersonName): { data: FamilyData; person: Person; marriage: Marriage } {
+  const person = blankPerson(data.people, naming);
   const marriage: Marriage = { id: newId('m'), spouseIds: [personId, person.id], status: 'current', childIds: [] };
   const next = pinIntoManualRowIfNeeded({ ...data, people: [...data.people, person], marriages: [...data.marriages, marriage] }, person.id);
   return { data: next, person, marriage };
@@ -122,9 +141,9 @@ export function hasParents(data: FamilyData, personId: ID): boolean {
  * !hasParents(data, childId) — same trust-the-caller convention as
  * addExistingSpouse/addExistingChild.
  */
-export function addParents(data: FamilyData, childId: ID): { data: FamilyData; parentA: Person; parentB: Person; marriage: Marriage } {
-  const parentA = blankPerson(data.people);
-  const parentB = blankPerson([...data.people, parentA]);
+export function addParents(data: FamilyData, childId: ID, naming?: NewPersonName): { data: FamilyData; parentA: Person; parentB: Person; marriage: Marriage } {
+  const parentA = blankPerson(data.people, naming);
+  const parentB = blankPerson([...data.people, parentA], naming);
   const marriage: Marriage = { id: newId('m'), spouseIds: [parentA.id, parentB.id], status: 'current', childIds: [childId] };
   const withParents = { ...data, people: [...data.people, parentA, parentB], marriages: [...data.marriages, marriage] };
   const next = pinIntoManualRowIfNeeded(pinIntoManualRowIfNeeded(withParents, parentA.id), parentB.id);
@@ -146,10 +165,10 @@ export function deleteMarriage(data: FamilyData, marriageId: ID): FamilyData {
 }
 
 /** Defaults a new child's surname to their father's, if the marriage has one recorded. Left blank otherwise — never guessed from the mother. */
-export function addChild(data: FamilyData, marriageId: ID): { data: FamilyData; person: Person } {
+export function addChild(data: FamilyData, marriageId: ID, naming?: NewPersonName): { data: FamilyData; person: Person } {
   const marriage = data.marriages.find((m) => m.id === marriageId);
   const father = marriage && data.people.find((p) => marriage.spouseIds.includes(p.id) && p.gender === 'male');
-  const person: Person = { ...blankPerson(data.people), surname: father ? father.surname : undefined };
+  const person: Person = { ...blankPerson(data.people, naming), surname: father ? father.surname : undefined };
   const next = pinIntoManualRowIfNeeded(
     {
       ...data,
@@ -240,14 +259,52 @@ export function resetRowOrder(data: FamilyData, personId: ID): FamilyData {
  * pinIntoManualRowIfNeeded for why this also has to check the row they land in.
  */
 export function movePersonGeneration(data: FamilyData, personId: ID, direction: 'up' | 'down'): FamilyData {
-  const generations = computeGenerations(data);
-  const current = generations.get(personId);
+  // The row this person is actually drawn on, not computeGenerations' idea
+  // of it. The two differ whenever a couple's families have a different
+  // number of recorded generations: computeGenerations pulls spouses level,
+  // the tree doesn't. Starting from the wrong one moved someone two rows
+  // for a single tap (a real, previously-shipped bug).
+  const drawnRow = (d: FamilyData) => computeParentChildLayout(d).generationOf?.get(personId);
+  const current = drawnRow(data);
   if (current == null) return data;
   const target = direction === 'up' ? current - 1 : current + 1;
   if (target < 0) return data;
 
-  const moved: FamilyData = { ...data, people: data.people.map((p) => (p.id === personId ? { ...p, manualGeneration: target } : p)) };
-  return pinIntoManualRowIfNeeded(moved, personId);
+  const withManual = (d: FamilyData, ids: ID[]): FamilyData => ({
+    ...d,
+    people: d.people.map((p) => (ids.includes(p.id) ? { ...p, manualGeneration: target } : p)),
+  });
+  // Moving just this person is enough for anyone the tree places by their
+  // own family line. A spouse with no recorded parents is instead drawn on
+  // their partner's row, so moving them on their own changes nothing on
+  // screen; for them, the couple moves together. Each try is checked
+  // against the real layout, and only one that lands exactly one row away
+  // is kept. (Moving up past one's own parents is never possible, so that
+  // just does nothing.)
+  const spouseIds = data.marriages.filter((m) => m.spouseIds.includes(personId)).map((m) => m.spouseIds.find((id) => id !== personId)!);
+  const attempts: ID[][] = [[personId], ...spouseIds.map((spouseId) => [personId, spouseId])];
+  for (const ids of attempts) {
+    const moved = withManual(data, ids);
+    if (drawnRow(moved) === target) return ids.reduce((d, id) => pinIntoManualRowIfNeeded(d, id), moved);
+  }
+  return data;
+}
+
+/**
+ * Puts a marriage's children in a hand-set order (dragged into place on the
+ * marriage's edit form), oldest first, and from then on keeps that order
+ * instead of sorting by birth date (Marriage.manualChildOrder). `ids` must be
+ * exactly this marriage's children; anything else is ignored.
+ */
+export function setChildOrder(data: FamilyData, marriageId: ID, ids: ID[]): FamilyData {
+  const marriage = data.marriages.find((m) => m.id === marriageId);
+  if (!marriage || ids.length !== marriage.childIds.length || !ids.every((id) => marriage.childIds.includes(id))) return data;
+  return { ...data, marriages: data.marriages.map((m) => (m.id === marriageId ? { ...m, childIds: ids.slice(), manualChildOrder: true } : m)) };
+}
+
+/** Goes back to sorting this marriage's children by birth date. */
+export function resetChildOrder(data: FamilyData, marriageId: ID): FamilyData {
+  return { ...data, marriages: data.marriages.map((m) => (m.id === marriageId ? { ...m, manualChildOrder: undefined } : m)) };
 }
 
 /** Detaches a child from a marriage without deleting them — they become a standalone person. */

@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Gender, ID, Marriage, Person } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { formatJalali } from '../utils/jalali';
 import { pickPersonPhoto } from '../utils/photo';
+import { albumPhotoUri, pickAlbumPhotos } from '../utils/album';
+import { isDeceased } from '../model/people';
 import { ShamsiDatePicker } from './ShamsiDatePicker';
 import { PersonPicker } from './PersonPicker';
 import { MarriagePicker } from './MarriagePicker';
@@ -55,6 +58,9 @@ export function PersonEditSheet({
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Modals draw edge-to-edge too, so the sheet adds the system bars' own
+  // insets itself — otherwise its last row sits under the back/home bar.
+  const insets = useSafeAreaInsets();
   const [spousePickerOpen, setSpousePickerOpen] = useState(false);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [name, setName] = useState('');
@@ -63,9 +69,11 @@ export function PersonEditSheet({
   const [photo, setPhoto] = useState<string | undefined>(undefined);
   const [born, setBorn] = useState<string | undefined>(undefined);
   const [died, setDied] = useState<string | undefined>(undefined);
+  const [deceased, setDeceased] = useState(false);
   const [birthPlace, setBirthPlace] = useState('');
   const [gravePlace, setGravePlace] = useState('');
   const [notes, setNotes] = useState('');
+  const [album, setAlbum] = useState<string[]>([]);
   const [activePicker, setActivePicker] = useState<'born' | 'died' | null>(null);
 
   useEffect(() => {
@@ -76,9 +84,11 @@ export function PersonEditSheet({
     setPhoto(person.photoUri);
     setBorn(person.born);
     setDied(person.died);
+    setDeceased(isDeceased(person));
     setBirthPlace(person.birthPlace ?? '');
     setGravePlace(person.gravePlace ?? '');
     setNotes(person.notes ?? '');
+    setAlbum(person.photos ?? []);
   }, [person, visible]);
 
   if (!person) return null;
@@ -101,6 +111,11 @@ export function PersonEditSheet({
     if (uri) setPhoto(uri);
   };
 
+  const handleAddAlbumPhotos = async () => {
+    const added = await pickAlbumPhotos(t);
+    if (added.length > 0) setAlbum((current) => [...current, ...added]);
+  };
+
   const handleSave = () => {
     if (!nameValid) return;
     onSave({
@@ -109,23 +124,26 @@ export function PersonEditSheet({
       gender,
       photoUri: photo,
       born,
-      died,
+      // The date and burial place only mean anything for someone who's died.
+      deceased: deceased || undefined,
+      died: deceased ? died : undefined,
       birthPlace: birthPlace.trim() || undefined,
       // No death date -> no burial place, even if one was entered before they were (incorrectly) marked as deceased.
-      gravePlace: died ? gravePlace.trim() || undefined : undefined,
+      gravePlace: deceased ? gravePlace.trim() || undefined : undefined,
       notes: notes.trim() || undefined,
+      photos: album.length > 0 ? album : undefined,
     });
     onClose();
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={[styles.title, isRTL && styles.textEnd]}>{t('editPerson')}</Text>
 
@@ -163,9 +181,24 @@ export function PersonEditSheet({
               </View>
             </Field>
 
-            {/* Birth and death each get their own column — date on top, place
-                directly under its own date, rather than every date first and
-                every place afterward. */}
+            {/* Being deceased is its own checkbox (someone can be known to
+                have died without anyone knowing when), above both columns so
+                it never pushes the death column out of line with the birth
+                one. Ticked, the death date and burial place appear, and
+                both may stay empty. */}
+            <Pressable
+              style={[styles.checkRow, isRTL && styles.rowRTL]}
+              onPress={() => setDeceased((v) => !v)}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: deceased }}
+            >
+              <View style={[styles.checkBox, deceased && styles.checkBoxOn]}>{deceased && <Text style={styles.checkMark}>✓</Text>}</View>
+              <Text style={[styles.checkLabel, isRTL && styles.textEnd]}>{t('deceased')}</Text>
+            </Pressable>
+
+            {/* One row per kind of detail, birth beside death: the two
+                dates side by side, then the two places, so each always lines
+                up with its partner. */}
             <View style={[styles.row, isRTL && styles.rowRTL]}>
               <View style={{ flex: 1 }}>
                 <Field styles={styles} label={t('bornYear')} isRTL={isRTL}>
@@ -175,20 +208,27 @@ export function PersonEditSheet({
                     </Text>
                   </Pressable>
                 </Field>
+              </View>
+              <View style={{ flex: 1 }}>
+                {deceased && (
+                  <Field styles={styles} label={t('diedYear')} isRTL={isRTL}>
+                    <Pressable style={styles.dateField} onPress={() => setActivePicker('died')}>
+                      <Text style={[styles.dateFieldText, !died && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
+                        {died ? formatJalali(died) : t('leaveEmptyIfUnknown')}
+                      </Text>
+                    </Pressable>
+                  </Field>
+                )}
+              </View>
+            </View>
+            <View style={[styles.row, isRTL && styles.rowRTL]}>
+              <View style={{ flex: 1 }}>
                 <Field styles={styles} label={t('placeOfBirth')} isRTL={isRTL}>
                   <TextInput style={inputStyle} value={birthPlace} onChangeText={setBirthPlace} placeholder={t('cityPlaceholder')} placeholderTextColor={theme.inkFaint} />
                 </Field>
               </View>
               <View style={{ flex: 1 }}>
-                <Field styles={styles} label={t('diedYear')} isRTL={isRTL}>
-                  <Pressable style={styles.dateField} onPress={() => setActivePicker('died')}>
-                    <Text style={[styles.dateFieldText, !died && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
-                      {died ? formatJalali(died) : t('selectDate')}
-                    </Text>
-                  </Pressable>
-                  {!died && <Text style={[styles.hint, isRTL && styles.textEnd]}>{t('livingNoDeathDate')}</Text>}
-                </Field>
-                {died && (
+                {deceased && (
                   <Field styles={styles} label={t('placeOfBurial')} isRTL={isRTL}>
                     <TextInput style={inputStyle} value={gravePlace} onChangeText={setGravePlace} placeholder={t('cemeteryPlaceholder')} placeholderTextColor={theme.inkFaint} />
                   </Field>
@@ -271,6 +311,29 @@ export function PersonEditSheet({
                   <Text style={styles.secondaryButtonText}>{t('selectExistingPerson')}</Text>
                 </Pressable>
               </View>
+            </Field>
+
+            <Field styles={styles} label={t('albumCount', { count: album.length })} isRTL={isRTL}>
+              {album.length > 0 && (
+                <View style={[styles.albumGrid, isRTL && styles.rowRTL]}>
+                  {album.map((entry, index) => (
+                    <View key={`${index}-${entry.slice(-24)}`} style={styles.albumThumbWrap}>
+                      <Image source={{ uri: albumPhotoUri(entry) }} style={styles.albumThumb} />
+                      <Pressable
+                        style={styles.albumRemove}
+                        onPress={() => setAlbum((current) => current.filter((_, i) => i !== index))}
+                        hitSlop={8}
+                        accessibilityLabel={t('removePhoto')}
+                      >
+                        <Text style={styles.albumRemoveText}>×</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              )}
+              <Pressable style={styles.secondaryButton} onPress={handleAddAlbumPhotos}>
+                <Text style={styles.secondaryButtonText}>{t('addAlbumPhotos')}</Text>
+              </Pressable>
             </Field>
 
             <Pressable style={[styles.primaryButton, !nameValid && styles.buttonDisabled]} disabled={!nameValid} onPress={handleSave}>
@@ -388,6 +451,26 @@ function createStyles(theme: Theme) {
   dateFieldText: { color: theme.ink, fontSize: 14 },
   dateFieldPlaceholder: { color: theme.inkFaint },
   photoRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6, marginBottom: 12 },
+  checkBox: { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: theme.stroke, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.panel2 },
+  checkBoxOn: { backgroundColor: theme.lineMarriage, borderColor: theme.lineMarriage },
+  checkMark: { color: theme.bg, fontSize: 15, fontWeight: '800', lineHeight: 17 },
+  checkLabel: { color: theme.ink, fontSize: 14, fontWeight: '600' },
+  albumGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+  albumThumbWrap: { width: 76, height: 76 },
+  albumThumb: { width: 76, height: 76, borderRadius: 10, backgroundColor: theme.panel2 },
+  albumRemove: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: theme.lineEnded,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumRemoveText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700', lineHeight: 17 },
   photoPreview: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.panel2 },
   photoPlaceholder: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.panel2, borderWidth: 1, borderColor: theme.stroke, borderStyle: 'dashed' },
   segmented: { flexDirection: 'row', gap: 8 },

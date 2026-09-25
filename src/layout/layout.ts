@@ -2,13 +2,10 @@ import type { FamilyData, ID, Marriage } from '../types';
 import { computeGenerations } from './generations';
 import { computeRowOrder } from './order';
 
-export const NODE_WIDTH = 140;
-export const NODE_HEIGHT = 72;
-export const COL_SPACING = 164;
-export const ROW_SPACING = 220;
-export const UNION_OFFSET = 60;
-/** Vertical spacing between "lanes" when two marriages' bars would otherwise overlap — see computeLayout. */
-export const UNION_LANE_STEP = 24;
+export const NODE_WIDTH = 170;
+export const NODE_HEIGHT = 86;
+export const COL_SPACING = 200;
+export const ROW_SPACING = 316;
 /**
  * How many generations' worth of "the tree is getting bigger" scaling
  * (row spacing in computeParentChildLayout, card size + name font in
@@ -19,6 +16,56 @@ export const UNION_LANE_STEP = 24;
  * would eventually make a single generation's row taller than is useful.
  */
 export const GENERATION_GROWTH_CAP = 8;
+/** How much a card's height grows per generation of depth — see TreeCanvas's cardHeight. */
+export const CARD_HEIGHT_GROWTH_PER_GEN = 6;
+/**
+ * Card center down to its marriage bar. The bar carries the ⊕ marker
+ * (radius MARKER_RADIUS), so this keeps the whole marker clear of even the
+ * tallest, fully grown card's bottom edge, plus a few pixels of gap.
+ * ROW_SPACING leaves room for two stacked lanes below that before the next
+ * row's cards start.
+ */
+export const MARKER_RADIUS = 28;
+export const MAX_CARD_HALF_HEIGHT = (NODE_HEIGHT + GENERATION_GROWTH_CAP * CARD_HEIGHT_GROWTH_PER_GEN) / 2;
+export const UNION_OFFSET = MAX_CARD_HALF_HEIGHT + MARKER_RADIUS + 9;
+/** Vertical spacing between "lanes" when two marriages' bars would otherwise overlap — see computeLayout. A full marker's width plus a gap, so two stacked markers never touch. */
+export const UNION_LANE_STEP = MARKER_RADIUS * 2 + 6;
+
+/**
+ * Every size the tree layout depends on, for one card style (see
+ * CardStyle). Compact is the plain constants above, which is also the
+ * default everywhere, so every existing caller and check keeps its exact
+ * numbers. The ⊕ marker and its lanes are the same size in every style.
+ */
+export interface CardMetrics {
+  nodeWidth: number;
+  nodeHeight: number;
+  colSpacing: number;
+  rowSpacing: number;
+  /** How much the card grows in height per generation of depth, up to GENERATION_GROWTH_CAP. */
+  heightGrowthPerGen: number;
+  /** Half the tallest (fully grown) card's height. */
+  maxCardHalfHeight: number;
+  /** Card center down to its marriage bar; see UNION_OFFSET. */
+  unionOffset: number;
+}
+
+function metricsFor(nodeWidth: number, nodeHeight: number, colSpacing: number, rowSpacing: number, heightGrowthPerGen: number): CardMetrics {
+  const maxCardHalfHeight = (nodeHeight + GENERATION_GROWTH_CAP * heightGrowthPerGen) / 2;
+  return { nodeWidth, nodeHeight, colSpacing, rowSpacing, heightGrowthPerGen, maxCardHalfHeight, unionOffset: maxCardHalfHeight + MARKER_RADIUS + 9 };
+}
+
+/** Name beside an optional small photo, in a wide, short card. */
+export const COMPACT_METRICS = metricsFor(NODE_WIDTH, NODE_HEIGHT, COL_SPACING, ROW_SPACING, CARD_HEIGHT_GROWTH_PER_GEN);
+/**
+ * A tall, portrait card: a big photo on top, the name under it. Rows sit
+ * much further apart to fit it, with the same room below each row for a
+ * marriage lane, its ⊕, and the child lines as compact has.
+ */
+export const LARGE_METRICS = metricsFor(200, 256, 240, 500, 8);
+
+export type CardStyle = 'compact' | 'large';
+export const CARD_METRICS: Record<CardStyle, CardMetrics> = { compact: COMPACT_METRICS, large: LARGE_METRICS };
 
 export interface Point {
   x: number;
@@ -49,6 +96,8 @@ export interface LayoutUnion {
 export interface Layout {
   positions: Map<ID, Point>;
   unions: LayoutUnion[];
+  /** The row (generation) each person is actually drawn on, 0 at the top. Only computeParentChildLayout fills this in. */
+  generationOf?: Map<ID, number>;
   /** The smallest (most-negative-capable) and largest x among all positions — the tree's true horizontal extent, in the same raw cell*COL_SPACING units as positions.x. Rendering uses these to size/position the canvas around content that doesn't necessarily start at x=0; see TreeCanvas. */
   minX: number;
   maxX: number;
@@ -135,7 +184,8 @@ interface RawUnion {
  * once everyone has an x/y, turning that into bars/markers doesn't depend
  * on *how* those positions were decided.
  */
-export function buildUnions(marriages: Marriage[], positions: Map<ID, Point>): LayoutUnion[] {
+export function buildUnions(marriages: Marriage[], positions: Map<ID, Point>, metrics: CardMetrics = COMPACT_METRICS): LayoutUnion[] {
+  const { colSpacing } = metrics;
   // The marker's own cell is deliberately always a *half*-cell — exactly
   // between two adjacent whole cells — never a whole cell itself, so it can
   // never land on top of any card, occupied or not: cards only ever sit at
@@ -157,17 +207,22 @@ export function buildUnions(marriages: Marriage[], positions: Map<ID, Point>): L
     // on two different rows, and the bar/marker belongs under the younger
     // one, not floating above them at the elder's row.
     const rowY = Math.max(pa?.y ?? 0, pb?.y ?? 0);
-    const minCell = Math.min(ax, bx) / COL_SPACING;
-    const maxCell = Math.max(ax, bx) / COL_SPACING;
+    const minCell = Math.min(ax, bx) / colSpacing;
+    const maxCell = Math.max(ax, bx) / colSpacing;
 
     const childCells = m.childIds
       .map((childId) => positions.get(childId)?.x)
       .filter((x): x is number => x != null)
-      .map((x) => x / COL_SPACING);
+      .map((x) => x / colSpacing);
     const targetCell = childCells.length > 0 ? childCells.reduce((sum, c) => sum + c, 0) / childCells.length : (minCell + maxCell) / 2;
 
     const candidates: number[] = [];
     for (let c = minCell + 0.5; c < maxCell; c += 1) candidates.push(c);
+    // Two spouses in the same column (only possible across generations,
+    // see rowY above) have no half-cell between them; the one just beside
+    // that column still never lands on a card. Without this the marker had
+    // no x at all and was never drawn.
+    if (candidates.length === 0) candidates.push(minCell + 0.5);
     candidates.sort((x, y) => {
       const dx = Math.abs(x - targetCell);
       const dy = Math.abs(y - targetCell);
@@ -231,8 +286,8 @@ export function buildUnions(marriages: Marriage[], positions: Map<ID, Point>): L
   });
 
   return rawUnions.map((u) => {
-    const barY = u.rowY + UNION_OFFSET + (laneByMarriageId.get(u.marriage.id) ?? 0) * UNION_LANE_STEP;
-    const markerX = markerCellByMarriageId.get(u.marriage.id)! * COL_SPACING;
+    const barY = u.rowY + metrics.unionOffset + (laneByMarriageId.get(u.marriage.id) ?? 0) * UNION_LANE_STEP;
+    const markerX = markerCellByMarriageId.get(u.marriage.id)! * colSpacing;
     return { marriage: u.marriage, barY, markerX, markerY: barY };
   });
 }

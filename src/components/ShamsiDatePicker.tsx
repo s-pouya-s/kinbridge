@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import {
@@ -41,6 +42,9 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Modals draw edge-to-edge too, so the sheet adds the system bars' own
+  // insets itself — otherwise its last row sits under the back/home bar.
+  const insets = useSafeAreaInsets();
   const today = todayJalali();
   const selected = isoToJalali(value);
 
@@ -84,12 +88,12 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
   };
 
   return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see
           PersonSheet's comment on why nesting a ScrollView inside a
           Pressable makes scrolling fight the backdrop for touch-responder
           status (the year list below is exactly that kind of ScrollView). */}
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, { paddingTop: 20 + insets.top, paddingBottom: 20 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={styles.card}>
           <Text style={[styles.title, isRTL && styles.textEnd]}>{title}</Text>

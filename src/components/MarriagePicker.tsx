@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Marriage, Person } from '../types';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 
@@ -23,6 +24,9 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  // Modals draw edge-to-edge too, so the sheet adds the system bars' own
+  // insets itself — otherwise its last row sits under the back/home bar.
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const byId = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -43,13 +47,13 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
   }, [marriages, query, byId]);
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <Text style={[styles.title, isRTL && styles.textEnd]}>{title}</Text>
           <TextInput
             style={[styles.search, isRTL && styles.textEnd]}
