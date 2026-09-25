@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { SlideInLeft, SlideInRight } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
@@ -24,6 +24,7 @@ interface Props {
   onPersonTree: () => void;
   onImport: () => void;
   onExport: () => void;
+  onExportPdf: () => void;
 }
 
 /**
@@ -32,7 +33,7 @@ interface Props {
  * Persian and the left in English.
  *
  * Actions that change what's on screen (edit mode)
- * or open something else (help, a person's tree, find relationship, import, export) close the menu
+ * or open something else (help, a person's tree, find relationship, import, export, PDF) close the menu
  * first, so the result is visible right away and no two Modals are ever
  * stacked. Language, theme, the map, the card style and the ribbon leave it open, since the menu itself is where
  * that change shows up first.
@@ -55,6 +56,7 @@ export function SideMenu({
   onPersonTree,
   onImport,
   onExport,
+  onExportPdf,
 }: Props) {
   const { t, isRTL, locale } = useI18n();
   const { theme, mode } = useTheme();
@@ -62,6 +64,21 @@ export function SideMenu({
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const panelWidth = Math.min(300, window.width * 0.8);
+
+  // Slides in from its own edge with a plain transform, not a Reanimated
+  // `entering` animation: that one copies the view's size when it first
+  // lays out, and a Modal first lays out without the system bars (750 of an
+  // 832-tall screen here), only growing to full height a moment later, so
+  // the panel stayed short of the bottom of the screen (a real, previously-
+  // shipped bug, measured on a device).
+  const slide = useSharedValue(1);
+  useEffect(() => {
+    if (!visible) return;
+    slide.value = 1;
+    slide.value = withTiming(0, { duration: 220 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+  const slideStyle = useAnimatedStyle(() => ({ transform: [{ translateX: slide.value * (isRTL ? 1 : -1) * (panelWidth + 40) }] }));
 
   const closeThen = (action: () => void) => () => {
     onClose();
@@ -73,8 +90,8 @@ export function SideMenu({
       <View style={[styles.backdrop, isRTL && styles.backdropRTL]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={t('closeMenu')} />
         <Animated.View
-          entering={isRTL ? SlideInRight.duration(220) : SlideInLeft.duration(220)}
           style={[
+            slideStyle,
             styles.panel,
             isRTL ? styles.panelRTL : styles.panelLTR,
             {
@@ -87,7 +104,7 @@ export function SideMenu({
           ]}
         >
           <Text style={[styles.title, isRTL && styles.textRTL]}>{t('appTitle')}</Text>
-          <ScrollView contentContainerStyle={styles.list}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.list}>
             <MenuRow
               styles={styles}
               label={t('editMode')}
@@ -109,6 +126,7 @@ export function SideMenu({
             <View style={styles.divider} />
             <MenuRow styles={styles} label={t('import')} onPress={closeThen(onImport)} />
             <MenuRow styles={styles} label={t('export')} onPress={closeThen(onExport)} />
+            <MenuRow styles={styles} label={t('exportPdf')} onPress={closeThen(onExportPdf)} />
             <View style={styles.divider} />
             <MenuRow styles={styles} label={t('help')} onPress={closeThen(onHelp)} />
           </ScrollView>
@@ -161,9 +179,13 @@ function createStyles(theme: Theme) {
   return StyleSheet.create({
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', flexDirection: 'row' },
     backdropRTL: { flexDirection: 'row-reverse' },
-    panel: { height: '100%', backgroundColor: theme.panel, borderColor: theme.stroke },
-    panelLTR: { borderRightWidth: 1 },
-    panelRTL: { borderLeftWidth: 1 },
+    // Pinned to the screen's top and bottom edges rather than height: '100%',
+    // which depends on the backdrop's height being settled when it's first
+    // measured; under the slide-in animation it wasn't, and the panel ended
+    // wherever its own rows did, partway down the screen.
+    panel: { position: 'absolute', top: 0, bottom: 0, backgroundColor: theme.panel, borderColor: theme.stroke },
+    panelLTR: { left: 0, borderRightWidth: 1 },
+    panelRTL: { right: 0, borderLeftWidth: 1 },
     title: { color: theme.ink, fontSize: 20, fontWeight: '700', paddingHorizontal: 20, paddingVertical: 12 },
     textRTL: { writingDirection: 'rtl', textAlign: 'right' },
     list: { paddingVertical: 4 },

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
+import { startLaunchAd, type AdsModule } from './launchAd';
 
 /**
  * Expo Go has no native TurboModules compiled in for this package at all —
@@ -19,24 +20,34 @@ import Constants from 'expo-constants';
  */
 const isExpoGo = Constants.appOwnership === 'expo';
 
-/** The real AdMob interstitial ad unit — only used outside __DEV__, where TestIds.INTERSTITIAL is used instead. */
+/** The real AdMob interstitial ad unit — used only in store builds (see useTestAds). */
 const PROD_AD_UNIT_ID = 'ca-app-pub-4666171217554833/7228771178';
 
 /**
- * Shows one interstitial ad the first time the app launches in this process,
- * then calls `onDone`. Never fires again until the app is fully relaunched —
- * there's no persisted "seen today" flag, because the in-memory `shown` ref
- * already resets on every cold start, which is exactly the "until next app
- * open" rule this is for.
+ * Google's test ads instead of the real ad unit: always in development,
+ * and in any EAS build whose profile sets EXPO_PUBLIC_ADS_TEST=1 (the
+ * development and preview profiles in eas.json). A preview APK is a
+ * release build, so __DEV__ alone let it show real ads, and tapping your
+ * own real ads while testing can get the AdMob account suspended.
+ */
+const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADS_TEST === '1';
+
+/**
+ * Shows one interstitial ad the first time the app launches in this process
+ * (see startLaunchAd), then calls `onWatched` once the viewer has watched and
+ * closed it. Never fires again until the app is fully relaunched — there's
+ * no persisted "seen today" flag, because the in-memory ref already resets
+ * on every cold start, which is exactly the "until next app open" rule this
+ * is for.
  *
  * `react-native-google-mobile-ads` has no web implementation and isn't
  * supported in Expo Go (custom native module) — both are guarded against
  * here so importing this file never breaks the web build or a plain Expo Go
- * session; on those, `onDone` just isn't called and the app opens normally.
+ * session; on those, no ad shows and the app opens normally.
  */
-export function useLaunchInterstitialAd(onDone: () => void) {
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+export function useLaunchInterstitialAd(onWatched: () => void) {
+  const onWatchedRef = useRef(onWatched);
+  onWatchedRef.current = onWatched;
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -45,36 +56,12 @@ export function useLaunchInterstitialAd(onDone: () => void) {
 
     // Defense in depth for anything else unexpected (a bad build, a future
     // Expo Go behavior change) — everything from require() through the
-    // first native call is still wrapped in one try/catch; any of them
-    // throwing just means "no ads here," not a crash.
+    // first native call is wrapped in one try/catch; any of them throwing
+    // just means "no ads here," not a crash.
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { default: mobileAds, InterstitialAd, AdEventType, TestIds } = require('react-native-google-mobile-ads');
-
-      const adUnitId = __DEV__ ? TestIds.INTERSTITIAL : PROD_AD_UNIT_ID;
-      const interstitial = InterstitialAd.createForAdRequest(adUnitId);
-
-      const unsubscribeLoaded = interstitial.addAdEventListener(AdEventType.LOADED, () => {
-        interstitial.show();
-      });
-      // Only the actual "watched and closed the ad" path says thanks — a load
-      // failure (offline, no fill) just lets the user in without any popup,
-      // rather than thanking them for something they never saw.
-      const unsubscribeClosed = interstitial.addAdEventListener(AdEventType.CLOSED, () => {
-        onDoneRef.current();
-      });
-      const unsubscribeError = interstitial.addAdEventListener(AdEventType.ERROR, () => {});
-
-      mobileAds()
-        .initialize()
-        .then(() => interstitial.load())
-        .catch(() => {});
-
-      return () => {
-        unsubscribeLoaded();
-        unsubscribeClosed();
-        unsubscribeError();
-      };
+      const ads: AdsModule = require('react-native-google-mobile-ads');
+      return startLaunchAd(ads, useTestAds ? ads.TestIds.INTERSTITIAL : PROD_AD_UNIT_ID, () => onWatchedRef.current());
     } catch {
       return;
     }

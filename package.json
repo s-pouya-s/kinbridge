@@ -11,6 +11,7 @@
     "expo-file-system": "~57.0.6",
     "expo-image-manipulator": "~57.0.19",
     "expo-image-picker": "~57.0.19",
+    "expo-print": "~57.0.2",
     "expo-sharing": "~57.0.21",
     "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
@@ -41,7 +42,8 @@
     "check:parentChild": "tsx scripts/checkParentChildLayout.ts",
     "check:jalali": "tsx scripts/checkJalali.ts",
     "check:mutations": "tsx scripts/checkMutations.ts",
-    "check:migrate": "tsx scripts/checkMigrate.ts"
+    "check:migrate": "tsx scripts/checkMigrate.ts",
+    "check:launchAd": "tsx scripts/checkLaunchAd.ts"
   },
   "private": true
 }

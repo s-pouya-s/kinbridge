@@ -53,8 +53,10 @@ import { PersonPicker } from './src/components/PersonPicker';
 import { PersonTreeView } from './src/components/PersonTreeView';
 import { ProjectsSheet } from './src/components/ProjectsSheet';
 import { TreeChooserSheet } from './src/components/TreeChooserSheet';
+import { ThanksDialog } from './src/components/ThanksDialog';
+import { exportTreePdf } from './src/export/pdf';
 import { findRelationshipRoutes, type PathStep } from './src/model/relationship';
-import { ThemeProvider, useTheme, type Theme } from './src/theme';
+import { ThemeProvider, themes, useTheme, type Theme } from './src/theme';
 import { I18nProvider, useI18n } from './src/i18n';
 import { useLaunchInterstitialAd } from './src/ads/launchInterstitial';
 import { pruneAlbumFiles } from './src/utils/album';
@@ -163,7 +165,11 @@ function Root() {
   // effect needs it on the very first render.
   const starterTree = (): FamilyData => addStandalonePerson({ people: [], marriages: [] }, newPersonName).data;
 
-  useLaunchInterstitialAd(() => showAlert(t('adThanksTitle')));
+  // Thanks someone for watching the launch ad to the end. A moment's pause
+  // first: the ad's screen is still closing, and a pop-up opened while
+  // Android is switching back to the app can fail to appear.
+  const [thanksVisible, setThanksVisible] = useState(false);
+  useLaunchInterstitialAd(() => setTimeout(() => setThanksVisible(true), 400));
 
   useEffect(() => {
     (async () => {
@@ -321,6 +327,24 @@ function Root() {
     if (nextData && projectId) saveFamilyData(projectId, nextData).catch((err) => showAlert(t('saveFailed'), String(err)));
     return result;
   }
+
+  // The open tree as a printable PDF: the tree itself, then everyone in a
+  // table. Always in the light theme's colors, since it's meant for paper.
+  const handleExportPdf = async () => {
+    try {
+      await exportTreePdf(data, {
+        treeName: activeProject.name,
+        isRTL,
+        locale,
+        t,
+        colors: themes.light,
+        showRibbon,
+        exportedAt: new Date(),
+      });
+    } catch (err) {
+      showAlert(t('pdfFailed'), String(err));
+    }
+  };
 
   // Export first asks which trees to put in the file (see the TreeChooserSheet below).
   const handleExport = () => setExportChooserOpen(true);
@@ -693,7 +717,10 @@ function Root() {
         }}
         onImport={handleImport}
         onExport={handleExport}
+        onExportPdf={handleExportPdf}
       />
+
+      <ThanksDialog visible={thanksVisible} onClose={() => setThanksVisible(false)} />
 
       <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
     </View>
