@@ -100,6 +100,29 @@ export function personTreeData(data: FamilyData, personId: ID): FamilyData {
     }
   }
 
+  // Brothers and sisters always share one row. Two ancestor lines that
+  // meet (cousins who married) can keep several children of one ancestor
+  // couple, at different distances from this person; they all move down to
+  // the lowest of their rows, taking everyone below them along, so a parent
+  // still always sits above their children.
+  for (let pass = 0; pass < keep.size + 2; pass++) {
+    let changed = false;
+    for (const m of marriages) {
+      const kids = m.childIds.filter((c) => keep.has(c));
+      if (kids.length === 0) continue;
+      const parentRow = Math.max(...m.spouseIds.map((s) => row.get(s) ?? 0));
+      // A child with no row yet starts one below their parents.
+      const target = Math.max(parentRow + 1, ...kids.map((c) => row.get(c) ?? parentRow + 1));
+      for (const c of kids) {
+        if (row.get(c) !== target) {
+          row.set(c, target);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+
   return {
     people: data.people.filter((p) => keep.has(p.id)).map((p) => ({ ...p, manualGeneration: row.get(p.id) ?? p.manualGeneration })),
     marriages,

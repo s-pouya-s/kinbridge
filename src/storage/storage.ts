@@ -1,11 +1,11 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
 import type { FamilyData } from '../types';
 import { normalizeFamilyData } from './migrate';
 import { readAlbumFiles, writeAlbumFiles } from '../utils/album';
+import { saveThenOfferShare } from '../utils/saveFile';
+import type { TFunction } from '../i18n';
 
 const STORAGE_KEY = 'kinbridge:family-data:v1';
 const PROJECTS_KEY = 'kinbridge:projects:v1';
@@ -83,21 +83,21 @@ export interface ExportTree {
 }
 
 /**
- * Writes the chosen trees to one JSON file and hands it to the user.
+ * Writes the chosen trees to one JSON file, saves it in a folder the user
+ * picks, then offers to share it (see saveThenOfferShare).
  *
  * The file holds a list of trees, each with its name, plus every album photo
  * any of them uses: those live in their own files (see utils/album.ts), so
  * they ride along here as base64, keyed by file name, and pickImportFile
  * reads them back.
  *
- * expo-file-system's Paths.document and expo-sharing's share sheet are
- * native-only concepts, so web gets its own implementation: a Blob
+ * The folder picker and the share sheet are native-only concepts, so web gets its own implementation: a Blob
  * downloaded via a throwaway <a download> link, the standard way a web page
  * hands the user a file. The export date is in both the content and the
  * filename, so exporting more than once never silently overwrites the last
  * file.
  */
-export async function exportTrees(trees: ExportTree[]): Promise<void> {
+export async function exportTrees(trees: ExportTree[], t: TFunction): Promise<void> {
   const exportedAt = new Date().toISOString();
   const albumFiles: Record<string, string> = {};
   for (const tree of trees) Object.assign(albumFiles, await readAlbumFiles(tree.data));
@@ -119,14 +119,11 @@ export async function exportTrees(trees: ExportTree[]): Promise<void> {
     return;
   }
 
-  const file = new File(Paths.document, fileName);
+  const file = new File(Paths.cache, fileName);
   if (file.exists) file.delete();
   file.create();
   file.write(json);
-
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(file.uri);
-  }
+  await saveThenOfferShare(file, fileName, 'application/json', t);
 }
 
 /** What an export file holds: its trees, and the album photos they use (see exportTrees). */
@@ -142,7 +139,7 @@ export interface ImportFile {
  * cancelled the picker.
  *
  * Web gets its own implementation for the same reason as exportTrees:
- * expo-document-picker's result URIs and expo-file-system's File class are
+ * expo-file-system's picker and File class are
  * built around native file access, not a browser's picked-file Blob.
  */
 export async function pickImportFile(): Promise<ImportFile | null> {
@@ -168,10 +165,14 @@ export async function pickImportFile(): Promise<ImportFile | null> {
     });
   }
 
-  const result = await DocumentPicker.getDocumentAsync({ type: 'application/json' });
-  if (result.canceled || result.assets.length === 0) return null;
-  const text = await new File(result.assets[0].uri).text();
-  return readExport(JSON.parse(text));
+  // expo-file-system's own picker, not expo-document-picker's: that one
+  // copies the file into a cache folder that Expo Go's file system won't
+  // let the app read ("missing READ permission"). Some phones label a
+  // .json file as plain text or a generic binary, so those are offered
+  // too; readExport refuses anything that isn't one of this app's exports.
+  const picked = await File.pickFileAsync({ mimeTypes: ['application/json', 'text/plain', 'application/octet-stream'] });
+  if (picked.canceled) return null;
+  return readExport(JSON.parse(await picked.result.text()));
 }
 
 /** One chosen tree from an import file, ready to save: its album photos written back out (only the ones it uses). */

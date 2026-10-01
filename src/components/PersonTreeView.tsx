@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { FamilyData, ID } from '../types';
 import type { CardStyle } from '../layout/layout';
 import { personTreeData } from '../model/personTree';
+import { FAMILY_GAP } from '../layout/parentChildLayout';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { TreeCanvas } from './TreeCanvas';
@@ -58,6 +59,8 @@ export function PersonTreeView({ data, personId, cardStyle, showMinimap, showRib
           {tree && focusId && (
             <TreeCanvas
               data={tree}
+              // One person's tree is one family: no extra room between their parents' sides.
+              rootFamilyGap={FAMILY_GAP}
               isRTL={isRTL}
               editMode={false}
               resetToken={0}

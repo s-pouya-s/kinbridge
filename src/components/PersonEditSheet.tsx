@@ -76,6 +76,12 @@ export function PersonEditSheet({
   const [album, setAlbum] = useState<string[]>([]);
   const [activePicker, setActivePicker] = useState<'born' | 'died' | null>(null);
 
+  // Filled from the saved person when the sheet opens, or switches to a
+  // different person, and never again while it's open: adding a spouse or
+  // parents from here saves straight away and can hand back a new person
+  // object, which would otherwise throw away what was typed but not saved
+  // (see MarriageEditSheet, where this shipped as a bug).
+  const personId = person?.id;
   useEffect(() => {
     if (!person || !visible) return;
     setName(person.name ?? '');
@@ -89,7 +95,8 @@ export function PersonEditSheet({
     setGravePlace(person.gravePlace ?? '');
     setNotes(person.notes ?? '');
     setAlbum(person.photos ?? []);
-  }, [person, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [personId, visible]);
 
   if (!person) return null;
 

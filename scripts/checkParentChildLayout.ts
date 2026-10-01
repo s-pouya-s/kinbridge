@@ -73,21 +73,21 @@ const pos = (id: string) => layout.positions.get(id)!;
   assert(Math.abs(daraWren.markerX - yusufX) <= Math.abs(kianDara.markerX - yusufX), "Yusuf (Wren's child) is at least as close to the Dara-Wren marker as to the Kian-Dara one");
 }
 
-// Dara and Noor are siblings (Elias & Mara's children) — their whole
-// subtree bands (each spanning their own children) must be contiguous,
-// with no other card — least of all one of Dara's own spouses (Kian,
-// Wren) or Noor's — wedged in between. This is the exact bug the
-// sibling/spouse redesign fixed: spouses used to bookend into their
-// partner's cluster, landing *between* two blood siblings instead of off
-// to the side in an overflow zone.
+// Dara and Noor are siblings (Elias & Mara's children). Dara's spouses
+// (Kian, Wren) married in with no recorded parents, so they sit in the
+// cells right beside her, no gap; nobody *else* lands between the two
+// siblings.
 {
   const daraX = pos('dara').x;
   const noorX = pos('noor').x;
   const daraY = pos('dara').y;
   const lo = Math.min(daraX, noorX);
   const hi = Math.max(daraX, noorX);
-  const betweenSiblings = richFamily.people.filter((p) => p.id !== 'dara' && p.id !== 'noor' && pos(p.id).y === daraY && pos(p.id).x > lo && pos(p.id).x < hi);
-  assert(betweenSiblings.length === 0, `no card is wedged between the two sibling cards (Dara, Noor) — found: ${betweenSiblings.map((p) => p.id).join(', ') || 'none'}`);
+  const own = new Set(['dara', 'noor', 'kian', 'wren']);
+  const betweenSiblings = richFamily.people.filter((p) => !own.has(p.id) && pos(p.id).y === daraY && pos(p.id).x > lo && pos(p.id).x < hi);
+  assert(betweenSiblings.length === 0, `only Dara's own spouses sit between Dara and Noor — also found: ${betweenSiblings.map((p) => p.id).join(', ') || 'none'}`);
+  const spouseOffsets = ['kian', 'wren'].map((id) => (pos(id).x - daraX) / COL_SPACING).sort();
+  assert(spouseOffsets[0] === 1 && spouseOffsets[1] === 2, `Kian and Wren sit in the two cells right beside Dara (offsets: ${spouseOffsets.join(', ')})`);
 }
 
 // Layla & Omid are a cousin marriage — both have their own recorded
@@ -133,13 +133,10 @@ const pos = (id: string) => layout.positions.get(id)!;
   assert(Number.isFinite(laylaOmidUnion.markerX), "the shared cousin-marriage cluster (Layla+Omid) still resolves to one real position, not two conflicting ones");
 }
 
-// The exact scenario the user reported as broken: three siblings, each
-// married to an outsider (no recorded parents of their own). Before the
-// sibling/spouse redesign, each sibling's *whole marriage cluster*
-// (spouse included) was placed as one unit, so the first sibling's spouse
-// landed immediately next to the second sibling — visually splitting the
-// siblings apart. Now every sibling's spouse is pushed into one shared
-// overflow zone after the whole sibling row, at least one empty cell away.
+// Three siblings, each married to an outsider (no recorded parents of
+// their own): each spouse sits in the very next cell after their own
+// partner, with no empty card-space between them, and the siblings keep
+// their order.
 {
   const threeSiblings: FamilyData = {
     people: [
@@ -161,14 +158,12 @@ const pos = (id: string) => layout.positions.get(id)!;
   };
   const siblingLayout = computeParentChildLayout(threeSiblings);
   const sPos = (id: string) => siblingLayout.positions.get(id)!;
-  const siblingXs = ['a', 'b', 'c'].map((id) => sPos(id).x).sort((x, y) => x - y);
-  const spouseXs = ['aSpouse', 'bSpouse', 'cSpouse'].map((id) => sPos(id).x);
-  const noSpouseBetweenSiblings = spouseXs.every((x) => x < siblingXs[0] || x > siblingXs[2]);
-  assert(noSpouseBetweenSiblings, 'none of the three spouses lands between the first and last sibling');
-  const siblingsAreContiguousRun = siblingXs[1] - siblingXs[0] === COL_SPACING && siblingXs[2] - siblingXs[1] === COL_SPACING;
-  assert(siblingsAreContiguousRun, 'A, B, and C sit in one unbroken contiguous run, each exactly one card apart');
-  const closestSpouseGap = Math.min(...spouseXs.map((x) => Math.min(Math.abs(x - siblingXs[0]), Math.abs(x - siblingXs[2]))));
-  assert(closestSpouseGap > COL_SPACING, 'every spouse sits at least one full card-space away from the sibling run, not merely adjacent to it');
+  const [ax, bx, cx] = ['a', 'b', 'c'].map((id) => sPos(id).x);
+  assert(ax < bx && bx < cx, 'A, B and C keep their order');
+  const spouseBeside = ['a', 'b', 'c'].every((id) => sPos(`${id}Spouse`).x - sPos(id).x === COL_SPACING && sPos(`${id}Spouse`).y === sPos(id).y);
+  assert(spouseBeside, "every spouse sits in the cell right next to their partner, no gap");
+  const allXs = ['a', 'b', 'c', 'aSpouse', 'bSpouse', 'cSpouse'].map((id) => sPos(id).x).sort((x, y) => x - y);
+  assert(allXs.every((x, i) => i === 0 || x - allXs[i - 1] === COL_SPACING), 'the three couples sit in one unbroken run, no empty cells');
 }
 
 // A real, previously-shipped bug: Kian and Wren (Dara's spouses) have no
@@ -503,6 +498,46 @@ const pos = (id: string) => layout.positions.get(id)!;
     `X's wife sits closer to X than Z (the far sibling) does — X: ${xX}, wife: ${xWifeX}, Z: ${zX}`
   );
   assert(Math.abs(xWifeX - xX) <= 2 * COL_SPACING, `X's wife sits close beside X, not pushed past every sibling (X: ${xX}, wife: ${xWifeX})`);
+}
+
+// Cousins: two brothers, each with two children. The two groups of
+// children sit one empty card-space apart, never touching.
+{
+  const cousins: FamilyData = {
+    people: ['gp1', 'gp2', 'a', 'aWife', 'b', 'bWife', 'a1', 'a2', 'b1', 'b2'].map((id) => ({ id, name: id })),
+    marriages: [
+      { id: 'm-gp', spouseIds: ['gp1', 'gp2'], status: 'current', childIds: ['a', 'b'] },
+      { id: 'm-a', spouseIds: ['a', 'aWife'], status: 'current', childIds: ['a1', 'a2'] },
+      { id: 'm-b', spouseIds: ['b', 'bWife'], status: 'current', childIds: ['b1', 'b2'] },
+    ],
+  };
+  const cLayout = computeParentChildLayout(cousins);
+  const cx = (id: string) => cLayout.positions.get(id)!.x;
+  const aKids = [cx('a1'), cx('a2')];
+  const bKids = [cx('b1'), cx('b2')];
+  const gap = Math.min(...bKids) - Math.max(...aKids);
+  assert(gap === 2 * COL_SPACING, `A's and B's children are one empty card-space apart (empty cells between: ${gap / COL_SPACING - 1})`);
+  assert(aKids[1] - aKids[0] === COL_SPACING && bKids[1] - bKids[0] === COL_SPACING, 'each set of siblings still sits side by side');
+}
+
+// A brother with ten children, then his childless sibling: the sibling
+// sits right beside the brother and his wife, not past all ten children.
+// The children may spread out underneath them, since nothing else is there.
+{
+  const kids = Array.from({ length: 10 }, (_, i) => `k${i}`);
+  const bigFamily: FamilyData = {
+    people: ['gp1', 'gp2', 'brother', 'brotherWife', 'me', ...kids].map((id) => ({ id, name: id })),
+    marriages: [
+      { id: 'm-gp', spouseIds: ['gp1', 'gp2'], status: 'current', childIds: ['brother', 'me'], manualChildOrder: true },
+      { id: 'm-brother', spouseIds: ['brother', 'brotherWife'], status: 'current', childIds: kids },
+    ],
+  };
+  const bLayout = computeParentChildLayout(bigFamily);
+  const bx = (id: string) => bLayout.positions.get(id)!.x;
+  assert(bx('brotherWife') - bx('brother') === COL_SPACING, "the brother's wife sits right beside him");
+  assert(bx('me') - bx('brotherWife') === COL_SPACING, `the childless sibling sits right after the brother's wife, no gap (${(bx('me') - bx('brotherWife')) / COL_SPACING} cells)`);
+  const kidXs = kids.map(bx).sort((a, b) => a - b);
+  assert(kidXs.every((x, i) => i === 0 || x - kidXs[i - 1] === COL_SPACING), 'the ten children still sit side by side');
 }
 
 process.exit(process.exitCode ?? 0);

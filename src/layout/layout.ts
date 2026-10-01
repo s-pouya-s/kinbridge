@@ -26,6 +26,13 @@ export const CARD_HEIGHT_GROWTH_PER_GEN = 6;
  * row's cards start.
  */
 export const MARKER_RADIUS = 28;
+/**
+ * The ⊕ is an oval, wider than it is tall: this much across from its center
+ * (MARKER_RADIUS is its height's half). Markers in a row are at least a whole
+ * column apart, so it never reaches the next one; its height stays
+ * MARKER_RADIUS, so the spacing between marriage bars doesn't change.
+ */
+export const MARKER_RADIUS_X = Math.round(MARKER_RADIUS * 1.6);
 export const MAX_CARD_HALF_HEIGHT = (NODE_HEIGHT + GENERATION_GROWTH_CAP * CARD_HEIGHT_GROWTH_PER_GEN) / 2;
 export const UNION_OFFSET = MAX_CARD_HALF_HEIGHT + MARKER_RADIUS + 9;
 /** Vertical spacing between "lanes" when two marriages' bars would otherwise overlap — see computeLayout. A full marker's width plus a gap, so two stacked markers never touch. */
@@ -63,6 +70,16 @@ export const COMPACT_METRICS = metricsFor(NODE_WIDTH, NODE_HEIGHT, COL_SPACING, 
  * marriage lane, its ⊕, and the child lines as compact has.
  */
 export const LARGE_METRICS = metricsFor(200, 256, 240, 500, 8);
+
+/**
+ * The size cards are actually drawn at for a laid-out tree: a little bigger
+ * the deeper the tree, up to GENERATION_GROWTH_CAP, but never wider than its
+ * column minus a 12px gap. Shared by TreeCanvas, the PDF and the checks.
+ */
+export function cardSize(maxGen: number, metrics: CardMetrics): { width: number; height: number; growth: number } {
+  const growth = Math.min(maxGen, GENERATION_GROWTH_CAP);
+  return { width: Math.min(metrics.nodeWidth + growth * 2, metrics.colSpacing - 12), height: metrics.nodeHeight + growth * metrics.heightGrowthPerGen, growth };
+}
 
 export type CardStyle = 'compact' | 'large';
 export const CARD_METRICS: Record<CardStyle, CardMetrics> = { compact: COMPACT_METRICS, large: LARGE_METRICS };

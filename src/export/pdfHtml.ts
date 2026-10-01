@@ -1,29 +1,48 @@
 import type { FamilyData, ID, Person } from '../types';
 import type { TFunction } from '../i18n';
 import type { Theme } from '../theme';
-import { COMPACT_METRICS, GENERATION_GROWTH_CAP, mirrorX } from '../layout/layout';
+import { cardSize, LARGE_METRICS, MARKER_RADIUS, MARKER_RADIUS_X, mirrorX } from '../layout/layout';
+import { makeUnionRouter } from '../layout/routes';
+import { cardText, fitLine, textWidth } from '../components/cardText';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
 import { isDeceased } from '../model/people';
 import { isoToJalali, toPersianDigits } from '../utils/jalali';
 
 /** Room around the tree inside the drawing, as on the canvas (see TreeCanvas's CANVAS_PADDING). */
 const PAD = 80;
-/** The ⊕ on paper; smaller than the on-screen tap target, which needs to fit a finger. */
-const MARKER_R = 14;
+/** The ⊕ on paper: the app's own oval (MARKER_RADIUS_X across, MARKER_RADIUS up and down). */
+const MARKER_R = MARKER_RADIUS;
+const MARKER_RX = MARKER_RADIUS_X;
+/** The PDF draws the large card style: the same layout, card size and text as the app's large cards. */
+const METRICS = LARGE_METRICS;
 
 const FONT_STACK = "'Vazirmatn', 'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, sans-serif";
-/** A4 landscape is 297 × 210 mm; this much is left blank all round for the printer. */
-const PAGE_MARGIN_MM = 10;
-/** The header strip at the top of each tree page: name, part number, where it goes. */
-const HEADER_MM = 14;
-/** The tree area on each page: all of it below the header. */
-const TILE_MM = { width: 297 - PAGE_MARGIN_MM * 2, height: 210 - PAGE_MARGIN_MM * 2 - HEADER_MM };
+/** A4 landscape, in millimeters. */
+const PAGE_MM = { width: 297, height: 210 };
+/**
+ * The blank border on the overview and the people table. Poster parts have
+ * none: their tree runs to the left, right and bottom edges of the paper.
+ */
+const PAGE_MARGIN_MM = 8;
+/**
+ * The strip at the top of each poster part: name, part number and a small
+ * map of where it goes. When the parts are laid out, it tucks under the
+ * part above, so the tree carries on with no gap and nothing to cut.
+ */
+const HEADER_MM = 10;
+/** The overview page's own title row. */
+const OVERVIEW_HEADER_MM = 14;
+/** CSS pixels per millimeter, for sizing the small placement map to fit the strip. */
+const PX_PER_MM = 96 / 25.4;
+/** The tree area on each poster part: the whole page below the header strip. */
+const TILE_MM = { width: PAGE_MM.width, height: PAGE_MM.height - HEADER_MM };
 /**
  * The poster's scale: millimeters of paper per unit of the tree drawing. A
- * card (about 170 units) prints about 3.4 cm wide and a name about 10 pt,
- * readable when the parts are laid out on a table or a wall.
+ * large card (about 210 by 310 units) prints about 3 by 4.4 cm, with names
+ * around 15 pt, and a sheet holds two to three generations: readable when
+ * the parts are laid out on a table or a wall.
  */
-const POSTER_MM_PER_UNIT = 0.2;
+const POSTER_MM_PER_UNIT = 0.14;
 
 export interface PdfOptions {
   treeName: string;
@@ -34,6 +53,13 @@ export interface PdfOptions {
   colors: Theme;
   showRibbon: boolean;
   exportedAt: Date;
+  /**
+   * Android's PDF maker always makes portrait pages, whatever size is asked
+   * for, and shrank each landscape page into the top half of one. With this
+   * set, every sheet is portrait and each landscape page is turned a
+   * quarter turn to fill it: printed, it's exactly the landscape page.
+   */
+  turnPages?: boolean;
 }
 
 /**
@@ -52,18 +78,17 @@ export interface PdfOptions {
  */
 export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string {
   const { t, isRTL, colors } = options;
-  const layout = computeParentChildLayout(data, COMPACT_METRICS);
+  const layout = computeParentChildLayout(data, METRICS);
   const byId = new Map(data.people.map((p) => [p.id, p]));
 
-  const growth = Math.min(layout.maxGen, GENERATION_GROWTH_CAP);
-  const cardW = Math.min(COMPACT_METRICS.nodeWidth + growth * 2, COMPACT_METRICS.colSpacing - 12);
-  const cardH = COMPACT_METRICS.nodeHeight + growth * COMPACT_METRICS.heightGrowthPerGen;
+  const { width: cardW, height: cardH, growth } = cardSize(layout.maxGen, METRICS);
+  const routeUnion = makeUnionRouter(layout, cardH);
   const width = layout.width + PAD * 2;
   // Card centers sit at their row's y, so the top row needs half a card of room above it.
   const height = layout.height + PAD * 2 + cardH / 2;
   // Same mapping as TreeCanvas's toCanvas: mirrored for RTL, shifted past the tree's own left edge.
   const at = (p: { x: number; y: number }) => ({
-    x: (isRTL ? mirrorX(p.x, layout.minX, layout.maxX) : p.x) - layout.minX + PAD + COMPACT_METRICS.colSpacing / 2,
+    x: (isRTL ? mirrorX(p.x, layout.minX, layout.maxX) : p.x) - layout.minX + PAD + METRICS.colSpacing / 2,
     y: p.y + PAD,
   });
 
@@ -79,7 +104,8 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   const nameOf = (p?: Person) => (!p ? '' : p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' '));
   const firstNameOf = (p?: Person) => (!p ? '' : p.unknown ? t('unknown') : p.name);
   const lifeSpan = (p: Person) => {
-    if (p.unknown) return '';
+    // Nothing at all when no date is known, rather than a lone "?".
+    if (p.unknown || (!p.born && !p.died)) return '';
     const born = year(p.born) ?? '?';
     if (!isDeceased(p)) return born;
     return `${born} – ${year(p.died) ?? '?'}`;
@@ -103,30 +129,29 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   const lines: string[] = [];
   const markers: string[] = [];
   for (const u of layout.unions) {
-    const pa = layout.positions.get(u.marriage.spouseIds[0]);
-    const pb = layout.positions.get(u.marriage.spouseIds[1]);
-    if (!pa || !pb) continue;
-    const a = at(pa);
-    const b = at(pb);
+    const routes = routeUnion(u);
+    if (!routes) continue;
     const m = at({ x: u.markerX, y: u.markerY });
     const barY = m.y;
     const color = u.marriage.status === 'current' ? colors.lineMarriage : colors.lineEnded;
     const dash = u.marriage.status === 'ended' ? ' stroke-dasharray="6 5"' : '';
-    lines.push(
-      `<path d="M${a.x} ${a.y + cardH / 2} V${barY} M${b.x} ${b.y + cardH / 2} V${barY} M${a.x} ${barY} H${b.x}" stroke="${color}" stroke-width="2.5" fill="none"${dash}/>`
-    );
-    addBox(a.x, Math.min(a.y, b.y) + cardH / 2, b.x, barY, 2);
-    addBox(m.x, barY, m.x, barY, MARKER_R);
-    for (const childId of u.marriage.childIds) {
-      const pc = layout.positions.get(childId);
-      if (!pc) continue;
-      const c = at(pc);
-      lines.push(`<line x1="${m.x}" y1="${barY}" x2="${c.x}" y2="${c.y - cardH / 2}" stroke="${colors.lineBlood}" stroke-width="2.2"/>`);
-      addBox(m.x, barY, c.x, c.y - cardH / 2, 2);
+    // The same straight lines the app draws (see makeUnionRouter).
+    const pathOf = (points: { x: number; y: number }[]) => {
+      const pts = points.map(at);
+      pts.forEach((p, i) => i > 0 && addBox(pts[i - 1].x, pts[i - 1].y, p.x, p.y, 2));
+      return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x} ${p.y}`).join(' ');
+    };
+    lines.push(`<path d="${routes.spouses.map(pathOf).join(' ')}" stroke="${color}" stroke-width="3" fill="none"${dash}/>`);
+    addBox(m.x - MARKER_RX, barY - MARKER_R, m.x + MARKER_RX, barY + MARKER_R);
+    for (const { points } of routes.children) {
+      lines.push(`<path d="${pathOf(points)}" stroke="${colors.lineBlood}" stroke-width="2.8" fill="none"/>`);
     }
     markers.push(
-      `<circle cx="${m.x}" cy="${barY}" r="${MARKER_R}" fill="${colors.panel}" stroke="${color}" stroke-width="2.5"/>` +
-        `<path d="M${m.x - 7} ${barY} H${m.x + 7} M${m.x} ${barY - 7} V${barY + 7}" stroke="${color}" stroke-width="3"/>`
+      `<ellipse cx="${m.x}" cy="${barY}" rx="${MARKER_RX}" ry="${MARKER_R}" fill="${colors.panel}" stroke="${color}" stroke-width="3.5"/>` +
+        // + for a current marriage, ✕ for an ended one, as in the app.
+        (u.marriage.status === 'ended'
+          ? `<path d="M${m.x - 11} ${barY - 11} L${m.x + 11} ${barY + 11} M${m.x - 11} ${barY + 11} L${m.x + 11} ${barY - 11}" stroke="${color}" stroke-width="4.5"/>`
+          : `<path d="M${m.x - 19} ${barY} H${m.x + 19} M${m.x} ${barY - 13} V${barY + 13}" stroke="${color}" stroke-width="4.5"/>`)
     );
   }
 
@@ -141,22 +166,42 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     const clip = `card${i}`;
     addBox(x, y, x + cardW, y + cardH);
     const photo = person.photoUri?.startsWith('data:') ? person.photoUri : undefined;
-    const avatar = Math.min(cardH - 24, 46);
-    // With a photo, the text moves over to leave it room on the reading-start side.
-    const textX = photo ? (isRTL ? c.x - avatar / 2 - 4 : c.x + avatar / 2 + 4) : c.x;
-    const photoX = isRTL ? x + cardW - 10 - avatar : x + 10;
+    // The app's large card: a photo square on top when there is one, then
+    // the name, surname and years, sized and cut exactly as on screen (see
+    // cardText); without a photo the names are bigger and centered.
+    const text = cardText({ ...person, photoUri: photo }, t('unknown'), 'large', cardW, cardH, METRICS.nodeHeight, growth);
+    const span = lifeSpan(person) ? fitLine(lifeSpan(person), text.maxTextWidth, (text.showPhoto ? 18 : 22) + growth * 0.5, 13) : undefined;
+    const lines = [
+      { line: text.name, weight: 700, fill: person.unknown ? colors.inkFaint : colors.ink },
+      ...(text.surname ? [{ line: text.surname, weight: 600, fill: colors.inkDim }] : []),
+      ...(span ? [{ line: span, weight: 400, fill: colors.inkDim }] : []),
+    ];
+    const blockHeight = lines.reduce((h, l) => h + l.line.fontSize * 1.3, 0);
+    const photoTop = y + 14;
+    let lineTop = text.showPhoto ? photoTop + text.photoSize + 10 : c.y - blockHeight / 2;
+    const textSvg = lines
+      .map((l) => {
+        const h = l.line.fontSize * 1.3;
+        // Drawn at exactly its measured width (never wider than the card's
+        // text area), so a font wider than the estimate still can't run past
+        // the card's edge.
+        const length = textWidth(l.line.text, l.line.fontSize);
+        const out = `<text x="${c.x}" y="${lineTop + h / 2}" dominant-baseline="central" text-anchor="middle" font-size="${l.line.fontSize}" font-weight="${l.weight}" fill="${l.fill}" textLength="${length}" lengthAdjust="spacingAndGlyphs"${isRTL ? ' direction="rtl"' : ''}>${escape(l.line.text)}</text>`;
+        lineTop += h;
+        return out;
+      })
+      .join('');
     cards.push(
       `<g>` +
-        `<clipPath id="${clip}"><rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="14"/></clipPath>` +
-        `<rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="14" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${person.unknown ? ' stroke-dasharray="5 4"' : ''}/>` +
-        (photo
-          ? `<clipPath id="${clip}p"><circle cx="${photoX + avatar / 2}" cy="${c.y}" r="${avatar / 2}"/></clipPath>` +
-            `<image href="${photo}" x="${photoX}" y="${c.y - avatar / 2}" width="${avatar}" height="${avatar}" clip-path="url(#${clip}p)" preserveAspectRatio="xMidYMid slice"/>`
+        `<clipPath id="${clip}"><rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="16"/></clipPath>` +
+        `<rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="16" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${person.unknown ? ' stroke-dasharray="5 4"' : ''}/>` +
+        (text.showPhoto && photo
+          ? `<clipPath id="${clip}p"><rect x="${c.x - text.photoSize / 2}" y="${photoTop}" width="${text.photoSize}" height="${text.photoSize}" rx="14"/></clipPath>` +
+            `<image href="${photo}" x="${c.x - text.photoSize / 2}" y="${photoTop}" width="${text.photoSize}" height="${text.photoSize}" clip-path="url(#${clip}p)" preserveAspectRatio="xMidYMid slice"/>`
           : '') +
-        `<text x="${textX}" y="${c.y - 4}" text-anchor="middle" font-size="17" font-weight="700" fill="${person.unknown ? colors.inkFaint : colors.ink}"${isRTL ? ' direction="rtl"' : ''}>${escape(firstNameOf(person))}</text>` +
-        `<text x="${textX}" y="${c.y + 17}" text-anchor="middle" font-size="12.5" fill="${colors.inkDim}"${isRTL ? ' direction="rtl"' : ''}>${escape(lifeSpan(person))}</text>` +
+        textSvg +
         (options.showRibbon && isDeceased(person)
-          ? `<line x1="${x - 4}" y1="${y + 30}" x2="${x + 30}" y2="${y - 4}" stroke="#050505" stroke-width="9" clip-path="url(#${clip})"/>`
+          ? `<line x1="${x - 6}" y1="${y + 44}" x2="${x + 44}" y2="${y - 6}" stroke="#050505" stroke-width="16" clip-path="url(#${clip})"/>`
           : '') +
         `</g>`
     );
@@ -180,7 +225,7 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     .map(
       (p) =>
         `<tr><td class="name">${escape(nameOf(p))}</td><td>${escape(date(p.born))}</td><td>${escape(p.birthPlace ?? '')}</td>` +
-        `<td>${escape(isDeceased(p) ? date(p.died) || t('deceased') : '')}</td><td>${escape(isDeceased(p) ? (p.gravePlace ?? '') : '')}</td>` +
+        `<td>${escape(isDeceased(p) ? date(p.died) || t('deceasedStatus') : '')}</td><td>${escape(isDeceased(p) ? (p.gravePlace ?? '') : '')}</td>` +
         `<td>${escape(parentsOf(p.id))}</td><td>${escape(spousesOf(p.id))}</td></tr>`
     )
     .join('');
@@ -191,7 +236,8 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   // The poster: the tree at a size you can read, cut into a grid of pages
   // (see POSTER_MM_PER_UNIT). Each page shows its own window onto the one
   // drawing; the windows tile the tree exactly, edge to edge, so the parts,
-  // trimmed along their dashed borders, rebuild the whole tree. The grid is
+  // laid side by side with each header strip under the part above, rebuild
+  // the whole tree without any trimming. The grid is
   // centered on the tree, so the spare room splits evenly around it.
   const tileW = TILE_MM.width / POSTER_MM_PER_UNIT;
   const tileH = TILE_MM.height / POSTER_MM_PER_UNIT;
@@ -200,8 +246,11 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   const originX = (width - gridCols * tileW) / 2;
   const originY = (height - gridRows * tileH) / 2;
   const total = gridCols * gridRows;
+  // The small placement map fills the strip's height (less 1 mm each side),
+  // so the strip holds no empty space around it.
+  const mapCell = Math.min(9, ((HEADER_MM - 2) * PX_PER_MM - 2) / gridRows - 2);
   const miniMap = (row: number, col: number) => {
-    const cell = 9;
+    const cell = mapCell;
     const cells: string[] = [];
     for (let r = 0; r < gridRows; r++) {
       for (let c = 0; c < gridCols; c++) {
@@ -226,6 +275,9 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   for (let r = 0; r < gridRows; r++) for (let c = 0; c < gridCols; c++) if (hasContent(r, c)) printed.push({ r, c });
   const printedTotal = printed.length;
 
+  // Each landscape page as it goes on paper: as is, or turned a quarter turn
+  // into a portrait sheet (see PdfOptions.turnPages).
+  const sheet = (page: string) => (options.turnPages ? `<div class="sheet">${page}</div>` : page);
   const posterPages: string[] = [];
   // A tree that already fits one page at poster size needs no parts: the
   // overview on page one is it, at full size.
@@ -234,10 +286,10 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     for (const { r, c } of printed) {
       {
         n++;
-        posterPages.push(`<section class="page">
+        posterPages.push(sheet(`<section class="page part">
   <header><h1>${escape(options.treeName)}</h1><span class="sub">${escape(t('pdfPartOf', { n: digits(n), total: digits(printedTotal) }))} · ${escape(t('pdfAssembleHint'))}</span>${miniMap(r, c)}</header>
   <div class="tile"><svg viewBox="${originX + c * tileW} ${originY + r * tileH} ${tileW} ${tileH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use href="#tree-art" xlink:href="#tree-art"/></svg></div>
-</section>`);
+</section>`));
       }
     }
   }
@@ -247,18 +299,27 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
 <head>
 <meta charset="utf-8"/>
 <style>
-  @page { size: A4 landscape; margin: ${PAGE_MARGIN_MM}mm; }
+  /* No page margin: the poster parts fill the paper. The overview pads itself; the table gets a page style of its own. */
+  @page { size: ${options.turnPages ? `${PAGE_MM.height}mm ${PAGE_MM.width}mm` : `${PAGE_MM.width}mm ${PAGE_MM.height}mm`}; margin: 0; }
+  @page people { margin: ${PAGE_MARGIN_MM}mm; }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: ${FONT_STACK}; color: ${colors.ink}; }
-  .page { page-break-after: always; height: ${210 - PAGE_MARGIN_MM * 2}mm; overflow: hidden; }
-  header { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid ${colors.lineMarriage}; padding-bottom: 4px; height: ${HEADER_MM - 3}mm; margin-bottom: 3mm; }
+  .page { page-break-after: always; width: ${PAGE_MM.width}mm; height: ${PAGE_MM.height}mm; overflow: hidden; }
+  /* A portrait sheet holding one landscape page, turned a quarter turn clockwise to fill it. */
+  .sheet { position: relative; width: ${PAGE_MM.height}mm; height: ${PAGE_MM.width}mm; overflow: hidden; page-break-after: always; }
+  .sheet > .page { position: absolute; top: 0; left: 0; page-break-after: auto; transform-origin: 0 0; transform: translateX(${PAGE_MM.height}mm) rotate(90deg); }
+  header { display: flex; align-items: center; gap: 12px; height: ${HEADER_MM}mm; }
   h1 { font-size: 18px; margin: 0; flex-shrink: 0; }
   .sub { flex: 1; font-size: 11px; color: ${colors.inkDim}; }
   .minimap { flex-shrink: 0; }
-  .overview svg { display: block; width: ${TILE_MM.width}mm; height: ${TILE_MM.height}mm; }
-  /* Exactly one part of the poster; the dashed outline is where to trim. */
-  .tile { width: ${TILE_MM.width}mm; height: ${TILE_MM.height}mm; outline: 0.3mm dashed ${colors.inkFaint}; }
+  .overview { padding: ${PAGE_MARGIN_MM}mm; }
+  .overview header { border-bottom: 2px solid ${colors.lineMarriage}; margin-bottom: 3mm; height: ${OVERVIEW_HEADER_MM - 3}mm; }
+  .overview svg { display: block; width: 100%; height: ${PAGE_MM.height - OVERVIEW_HEADER_MM - PAGE_MARGIN_MM * 2}mm; }
+  /* A poster part: the header strip, inset a little so a printer can reach its text, then the tree right to the paper's edges. */
+  .part header { padding: 0 2mm; background: ${colors.panel2}; border-bottom: 0.4mm solid ${colors.lineMarriage}; }
+  .tile { width: ${TILE_MM.width}mm; height: ${TILE_MM.height}mm; }
   .tile svg { display: block; width: 100%; height: 100%; }
+  .people { page: people; }
   h2 { font-size: 16px; margin: 0 0 8px; }
   table { width: 100%; border-collapse: collapse; font-size: 11px; }
   th { background: ${colors.panel2}; text-align: start; font-weight: 700; }
@@ -276,12 +337,12 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     ${cards.join('\n    ')}
   </g></defs>
 </svg>
-<section class="page overview">
+${sheet(`<section class="page overview">
   <header><h1>${escape(options.treeName)}</h1><span class="sub">${escape(subtitle)}</span></header>
   <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use href="#tree-art" xlink:href="#tree-art"/></svg>
-</section>
+</section>`)}
 ${posterPages.join('\n')}
-<section>
+<section class="people">
   <h2>${escape(t('pdfPeopleTitle'))}</h2>
   <table>
     <thead><tr><th>${escape(t('name'))}</th><th>${escape(t('bornYear'))}</th><th>${escape(t('placeOfBirth'))}</th><th>${escape(t('diedYear'))}</th><th>${escape(t('placeOfBurial'))}</th><th>${escape(t('parents'))}</th><th>${escape(t('spouse'))}</th></tr></thead>

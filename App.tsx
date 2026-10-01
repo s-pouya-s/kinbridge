@@ -358,7 +358,7 @@ function Root() {
         const treeData = project.id === projectIndex.activeId ? data : await loadFamilyData(project.id);
         if (treeData) trees.push({ name: project.name, data: treeData });
       }
-      await exportTrees(trees);
+      await exportTrees(trees, t);
     } catch (err) {
       showAlert(t('exportFailed'), String(err));
     }
@@ -554,6 +554,12 @@ function Root() {
         onShowTree={(personId) => {
           setSelectedPerson(null);
           setPersonTreeId(personId);
+        }}
+        onFindRelationship={(personId) => {
+          // This person comes in as the first of the two; only the other is left to choose.
+          setSelectedPerson(null);
+          setRelationshipIds({ first: personId, second: null });
+          setRelationshipOpen(true);
         }}
       />
       <MarriageSheet

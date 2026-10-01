@@ -49,3 +49,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Personal test data (real family trees). Never committed, never shipped: see AGENTS.md.
+/local/

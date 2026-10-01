@@ -19,7 +19,8 @@ const darkTheme = {
   inkFaint: '#6F7C8F',
   lineBlood: '#6FAE9F',
   lineMarriage: '#E0A63E',
-  lineEnded: '#A6485A',
+  // A true red, clearly apart from the gold of a current marriage (the old wine tone blended in).
+  lineEnded: '#F0606E',
   accentCousin: '#DD8064',
   // The tapped-card highlight — a distinct green from lineBlood's teal above.
   selected: '#5CB86B',
@@ -59,7 +60,7 @@ const lightTheme: typeof darkTheme = {
   inkFaint: '#948C78',
   lineBlood: '#2F7A67',
   lineMarriage: '#A66A16',
-  lineEnded: '#8C3346',
+  lineEnded: '#C8303C',
   accentCousin: '#B0522F',
   selected: '#2F8C48',
   selectedFill: '#CDEBD3',

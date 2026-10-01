@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { clampAxis } from '../utils/camera';
 import type { ID } from '../types';
 import type { Theme } from '../theme';
 import { LineSegment } from './LineSegment';
@@ -72,8 +74,11 @@ interface Props {
  * drifting past the tree (or zooming out past all of it) presses the frame
  * against that edge instead of leaving the map.
  *
- * Display only: pointerEvents="none" never steals a pan or a tap meant for a
- * card beneath it.
+ * It also steers the camera: tap a spot and the view centers there; drag
+ * and the view follows the finger. One pan that starts on touch (no
+ * minimum distance) does both, so a tap and the start of a drag behave the
+ * same. The camera is set directly, never animated (withTiming never landed
+ * on real phones), and stays within the canvas's own limits (clampAxis).
  */
 export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, cardHeight, viewport, scale, translateX, translateY, selectedId, isRTL, theme }: Props) {
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -118,11 +123,27 @@ export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, 
     height: frame.value.bottom - frame.value.top,
   }));
 
+  // A point on the map, back in the tree's own coordinates, becomes the
+  // middle of the screen.
+  const centerOn = (mx: number, my: number) => {
+    'worklet';
+    const s = scale.value;
+    const cx = (mx - offX) / k;
+    const cy = (my - offY) / k;
+    translateX.value = clampAxis(vw / 2 - cx * s, contentWidth, vw, s);
+    translateY.value = clampAxis(vh / 2 - cy * s, contentHeight, vh, s);
+  };
+  const steer = Gesture.Pan()
+    .minDistance(0)
+    .onBegin((e) => centerOn(e.x, e.y))
+    .onUpdate((e) => centerOn(e.x, e.y));
+
   if (vw === 0 || vh === 0 || contentWidth === 0 || contentHeight === 0) return null;
 
   return (
-    <View style={[styles.shadow, { width: mapWidth, height: mapHeight }, isRTL ? styles.left : styles.right]} pointerEvents="none">
-      <View style={styles.map}>
+    <GestureDetector gesture={steer}>
+    <View style={[styles.shadow, { width: mapWidth, height: mapHeight }, isRTL ? styles.left : styles.right]}>
+      <View style={styles.map} pointerEvents="none">
         {lines.map((l, i) => (
           <LineSegment key={i} x1={offX + l.x1 * k} y1={offY + l.y1 * k} x2={offX + l.x2 * k} y2={offY + l.y2 * k} color={theme.inkFaint} strokeWidth={0.6} />
         ))}
@@ -149,6 +170,7 @@ export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, 
         <Animated.View style={[styles.frame, frameStyle]} />
       </View>
     </View>
+    </GestureDetector>
   );
 }
 

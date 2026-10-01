@@ -1,0 +1,53 @@
+# Builds the preview APK on GitHub's own runner (eas build --local, so it
+# doesn't use the EAS build quota) and uploads it as a downloadable artifact.
+# Runs every check first (npm run check:all), so a broken layout is never
+# built. Needs the repository secret EXPO_TOKEN (an Expo access token for the
+# s-pouya-shs-team account) so EAS can hand over the Android signing key.
+name: Preview APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: preview-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+
+      - name: Run every check
+        run: npm run -s check:all
+
+      - name: Build the preview APK
+        run: eas build --local --profile preview --platform android --non-interactive --output kinbridge-preview.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kinbridge-preview-apk
+          path: kinbridge-preview.apk
+          retention-days: 30

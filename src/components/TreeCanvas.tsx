@@ -3,8 +3,10 @@ import { Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { LinearTransition, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import type { FamilyData, ID, Marriage, Person } from '../types';
-import { CARD_METRICS, GENERATION_GROWTH_CAP, MARKER_RADIUS, mirrorX, NODE_HEIGHT, NODE_WIDTH, UNION_LANE_STEP, type CardStyle } from '../layout/layout';
+import { CARD_METRICS, cardSize, MARKER_RADIUS, MARKER_RADIUS_X, mirrorX, NODE_HEIGHT, NODE_WIDTH, UNION_LANE_STEP, type CardStyle } from '../layout/layout';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
+import { CARD_PADDING, cardText, type CardText } from './cardText';
+import { makeUnionRouter, segmentsOf } from '../layout/routes';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { LineSegment } from './LineSegment';
@@ -24,9 +26,18 @@ const CANVAS_PADDING = 90;
 const ARROW_HIT = 44;
 /** Tap target diameter around a marriage's ⊕ — a full finger's width, and no more than UNION_LANE_STEP so two stacked markers never share a tap area. */
 const MARKER_HIT = UNION_LANE_STEP - 2;
+/**
+ * The tap area is much wider than the oval it covers: markers on one row are
+ * always at least a whole column (COMPACT colSpacing, 200) apart, so 150
+ * never reaches the next one. Its height can't grow: stacked lanes are only
+ * UNION_LANE_STEP apart (see MARKER_HIT).
+ */
+const MARKER_HIT_X = 150;
 
 interface Props {
   data: FamilyData;
+  /** Empty cells between separate founding families (see computeParentChildLayout's options); the main tree's default when unset. */
+  rootFamilyGap?: number;
   isRTL: boolean;
   editMode: boolean;
   /** View mode: opens the read-only sheet and recenters the tree on this person. */
@@ -66,13 +77,17 @@ function MarkerCircle({
   cx,
   cy,
   r,
+  rx,
   fill,
   stroke,
   strokeWidth,
 }: {
   cx: number;
   cy: number;
+  /** Half its height. */
   r: number;
+  /** Half its width; wider than `r` makes it an oval, left to right. */
+  rx: number;
   fill: string;
   stroke: string;
   strokeWidth: number;
@@ -81,9 +96,9 @@ function MarkerCircle({
     <View
       style={{
         position: 'absolute',
-        left: cx - r,
+        left: cx - rx,
         top: cy - r,
-        width: r * 2,
+        width: rx * 2,
         height: r * 2,
         borderRadius: r,
         backgroundColor: fill,
@@ -131,6 +146,7 @@ function DirectionArrow({ cx, cy, dir, dist, color, onPress }: { cx: number; cy:
 
 export function TreeCanvas({
   data,
+  rootFamilyGap,
   isRTL,
   editMode,
   onPersonPress,
@@ -169,7 +185,7 @@ export function TreeCanvas({
   }, [selectedPersonId]);
 
   const metrics = CARD_METRICS[cardStyle];
-  const layout = useMemo(() => computeParentChildLayout(data, metrics), [data, metrics]);
+  const layout = useMemo(() => computeParentChildLayout(data, metrics, { rootFamilyGap }), [data, metrics, rootFamilyGap]);
   const peopleById = useMemo(() => new Map(data.people.map((p) => [p.id, p])), [data.people]);
 
   // A card's own size (and its name font) grows modestly with the tree's
@@ -186,13 +202,10 @@ export function TreeCanvas({
   // work. Width's growth is capped well under COL_SPACING so a wider card
   // never crowds into its neighboring column; height and font have no such
   // ceiling since rowSpacing is growing right along with them.
-  const cardGrowth = Math.min(layout.maxGen, GENERATION_GROWTH_CAP);
-  const cardWidth = Math.min(metrics.nodeWidth + cardGrowth * 2, metrics.colSpacing - 12);
-  const cardHeight = metrics.nodeHeight + cardGrowth * metrics.heightGrowthPerGen;
-  const cardNameFontSize = (cardStyle === 'large' ? 20 : 18) + cardGrowth * 0.75;
+  const { width: cardWidth, height: cardHeight, growth: cardGrowth } = cardSize(layout.maxGen, metrics);
+  const routeUnion = useMemo(() => makeUnionRouter(layout, cardHeight), [layout, cardHeight]);
   // Compact: a small round photo beside the name. Large: a big square photo
   // across the top of the card, leaving room below for the name.
-  const cardAvatarSize = cardStyle === 'large' ? Math.min(cardWidth - 28, cardHeight - 88) : 46 * (cardHeight / metrics.nodeHeight);
 
   // Generations always run top-to-bottom and siblings left-to-right. Turning
   // the phone just gives the same tree a wider or taller viewport, which the
@@ -241,6 +254,37 @@ export function TreeCanvas({
     [isRTL, layout.minX, layout.maxX]
   );
 
+  // The person Reset centers on when there's no focus person: the one at the
+  // very top of the tree, and with several up there, the one with the most
+  // descendants (the family's founder, most often); ties go to the first.
+  const topPersonId = useMemo(() => {
+    const kids = new Map<ID, ID[]>();
+    for (const m of data.marriages) for (const sp of m.spouseIds) kids.set(sp, [...(kids.get(sp) ?? []), ...m.childIds]);
+    const countDescendants = (id: ID) => {
+      const seen = new Set<ID>();
+      const stack = [...(kids.get(id) ?? [])];
+      while (stack.length > 0) {
+        const c = stack.pop()!;
+        if (seen.has(c)) continue;
+        seen.add(c);
+        stack.push(...(kids.get(c) ?? []));
+      }
+      return seen.size;
+    };
+    const topY = Math.min(...Array.from(layout.positions.values(), (p) => p.y));
+    let best: ID | undefined;
+    let bestCount = -1;
+    for (const [id, p] of layout.positions) {
+      if (p.y !== topY) continue;
+      const n = countDescendants(id);
+      if (n > bestCount) {
+        best = id;
+        bestCount = n;
+      }
+    }
+    return best;
+  }, [data.marriages, layout]);
+
   const fitToViewport = useCallback(
     (animated: boolean) => {
       // Prefer the actually-measured container size, but never just do
@@ -259,16 +303,17 @@ export function TreeCanvas({
       // pixels — invisible, not just small) would do the same thing here.
       // Exploring the unbounded sibling axis is what panning is for;
       // Reset's job is to land at a scale where cards are actually legible,
-      // pinned to the tree's own start edge on that axis so it's a real
-      // root family in view, not an arbitrary cross-section from the
-      // geometric middle of a wide, unevenly-populated tree.
+      // centered on the top person (see topPersonId) so it's a real root
+      // family in view, not an arbitrary cross-section from the geometric
+      // middle of a wide, unevenly-populated tree.
       // Fit into the part of the canvas below the minimap, so the oldest
       // generation doesn't start out hidden underneath it.
       const fitHeight = Math.max(vh - topReserve, vh / 2);
       const fitScale = clamp(fitHeight / contentHeight, MIN_SCALE, 1);
-      // Centered on the focus person when there is one; otherwise pinned to
-      // the tree's own start edge (see above).
-      const focusPos = focusPersonId ? layout.positions.get(focusPersonId) : undefined;
+      // Centered on the focus person when there is one (the one-person
+      // view); otherwise on the person at the very top of the tree.
+      const focusId = focusPersonId ?? topPersonId;
+      const focusPos = focusId ? layout.positions.get(focusId) : undefined;
       const tx = focusPos ? vw / 2 - toCanvas(focusPos).x * fitScale : 0;
       const ty = vh - fitHeight + fitHeight / 2 - (contentHeight / 2) * fitScale;
       // withTiming was the one call in this whole file that never actually
@@ -283,7 +328,7 @@ export function TreeCanvas({
       translateX.value = clampAxis(tx, contentWidth, vw, fitScale);
       translateY.value = clampAxis(ty, contentHeight, vh, fitScale);
     },
-    [viewport, contentWidth, contentHeight, window.width, window.height, topReserve, focusPersonId, layout, toCanvas]
+    [viewport, contentWidth, contentHeight, window.width, window.height, topReserve, focusPersonId, topPersonId, layout, toCanvas]
   );
 
   useEffect(() => {
@@ -365,9 +410,12 @@ export function TreeCanvas({
 
   // Clears any selection and re-fits the tree — shared by the on-canvas ↻
   // button and the parent's resetToken (e.g. after an import).
-  const resetView = () => {
+  const clearSelection = () => {
     setSelectedPersonId(undefined);
     setSelectedMarriageId(undefined);
+  };
+  const resetView = () => {
+    clearSelection();
     fitToViewport(true);
   };
 
@@ -412,14 +460,6 @@ export function TreeCanvas({
 
   const composedGesture = Gesture.Simultaneous(pan, pinch);
 
-  // The point on a card's bottom edge (dir=1, e.g. a spouse's card down to
-  // the marriage bar) or top edge (dir=-1, e.g. a child's card back up to
-  // its parents' marker).
-  const genEdge = useCallback((p: { x: number; y: number }, dir: 1 | -1) => ({ x: p.x, y: p.y + dir * (cardHeight / 2) }), [cardHeight]);
-  // A point on a marriage's horizontal bar (at height `genScreen`), directly
-  // below `p`.
-  const barPoint = useCallback((genScreen: number, p: { x: number; y: number }) => ({ x: p.x, y: genScreen }), []);
-
   // Every translateX/translateY this file computes (fitToViewport, the
   // pinch/wheel focal-point math, the initial seed) assumes a plain
   // top-left pivot: screen = translate + scale * localPoint. React
@@ -461,33 +501,15 @@ export function TreeCanvas({
       }),
     [data.people, layout.positions, toCanvas, theme]
   );
-  // The same lines the canvas draws: each spouse's drop to the marriage
-  // bar, the bar itself, and the links down to each child.
+  // The same lines the canvas draws (see makeUnionRouter).
   const minimapLines = useMemo<MinimapLine[]>(
     () =>
       layout.unions.flatMap((u) => {
-        const posA = layout.positions.get(u.marriage.spouseIds[0]);
-        const posB = layout.positions.get(u.marriage.spouseIds[1]);
-        if (!posA || !posB) return [];
-        const marker = toCanvas({ x: u.markerX, y: u.markerY });
-        const a = toCanvas(posA);
-        const b = toCanvas(posB);
-        const aEdge = genEdge(a, 1);
-        const bEdge = genEdge(b, 1);
-        const couple = [
-          { x1: aEdge.x, y1: aEdge.y, x2: a.x, y2: marker.y },
-          { x1: bEdge.x, y1: bEdge.y, x2: b.x, y2: marker.y },
-          { x1: a.x, y1: marker.y, x2: b.x, y2: marker.y },
-        ];
-        const children = u.marriage.childIds.flatMap((childId) => {
-          const childPos = layout.positions.get(childId);
-          if (!childPos) return [];
-          const cEdge = genEdge(toCanvas(childPos), -1);
-          return [{ x1: marker.x, y1: marker.y, x2: cEdge.x, y2: cEdge.y }];
-        });
-        return [...couple, ...children];
+        const routes = routeUnion(u);
+        if (!routes) return [];
+        return [...routes.spouses, ...routes.children.map((c) => c.points)].flatMap((points) => segmentsOf(points.map(toCanvas)));
       }),
-    [layout, toCanvas, genEdge]
+    [layout, toCanvas, routeUnion]
   );
 
   // First tap on a card just selects it — highlighting its own lines and,
@@ -549,27 +571,20 @@ export function TreeCanvas({
             free to be any size/position; this is what the gesture actually
             binds to. */}
         <View style={styles.gestureArea}>
-        <Animated.View style={[styles.content, contentStyle]}>
+        {/* A tap on empty space clears the selection, so every line goes
+            back to its normal color. It sits behind the tree, and the tree's
+            own box lets touches through (box-none), so taps on cards and
+            markers still reach them first; a drag still pans, because the
+            pan gesture cancels the press. */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={clearSelection} accessible={false} />
+        <Animated.View style={[styles.content, contentStyle]} pointerEvents="box-none">
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             {layout.unions.map((u) => {
               const spouseA = peopleById.get(u.marriage.spouseIds[0]);
               const spouseB = peopleById.get(u.marriage.spouseIds[1]);
-              const posA = layout.positions.get(u.marriage.spouseIds[0]);
-              const posB = layout.positions.get(u.marriage.spouseIds[1]);
-              if (!spouseA || !spouseB || !posA || !posB) return null;
-
-              const a = toCanvas(posA);
-              const b = toCanvas(posB);
+              const routes = routeUnion(u);
+              if (!spouseA || !spouseB || !routes) return null;
               const marker = toCanvas({ x: u.markerX, y: u.markerY });
-              // The bar's fixed generation-axis screen coordinate — read
-              // off the marker rather than recomputed from u.barY, since
-              // buildUnions always sets markerY exactly equal to barY (the
-              // marker sits on the bar).
-              const genScreen = marker.y;
-              const aEdge = genEdge(a, 1);
-              const bEdge = genEdge(b, 1);
-              const aBar = barPoint(genScreen, a);
-              const bBar = barPoint(genScreen, b);
 
               // Once someone is selected, every line dims to gray except the
               // ones actually touching them: their own marriage(s), and the
@@ -583,30 +598,39 @@ export function TreeCanvas({
 
               return (
                 <React.Fragment key={u.marriage.id}>
-                  <LineSegment x1={aEdge.x} y1={aEdge.y} x2={aBar.x} y2={aBar.y} color={color} strokeWidth={3} dashed={dashed} />
-                  <LineSegment x1={bEdge.x} y1={bEdge.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={3} dashed={dashed} />
-                  <LineSegment x1={aBar.x} y1={aBar.y} x2={bBar.x} y2={bBar.y} color={color} strokeWidth={3} dashed={dashed} />
-                  {u.marriage.childIds.map((childId) => {
-                    const childPos = layout.positions.get(childId);
-                    if (!childPos) return null;
-                    const c = toCanvas(childPos);
-                    const cEdge = genEdge(c, -1);
+                  {/* Each spouse's line to the ⊕ (together they make the bar), then one line per child, always straight (see makeUnionRouter). */}
+                  {routes.spouses.flatMap((points, i) =>
+                    segmentsOf(points.map(toCanvas)).map((sg, j) => (
+                      <LineSegment key={`s${i}-${j}`} x1={sg.x1} y1={sg.y1} x2={sg.x2} y2={sg.y2} color={color} strokeWidth={3} dashed={dashed} />
+                    ))
+                  )}
+                  {routes.children.flatMap(({ childId, points }) => {
                     const childConnected = isConnected || childId === selectedPersonId;
-                    return (
+                    return segmentsOf(points.map(toCanvas)).map((sg, j) => (
                       <LineSegment
-                        key={childId}
-                        x1={marker.x}
-                        y1={marker.y}
-                        x2={cEdge.x}
-                        y2={cEdge.y}
+                        key={`${childId}-${j}`}
+                        x1={sg.x1}
+                        y1={sg.y1}
+                        x2={sg.x2}
+                        y2={sg.y2}
                         color={childConnected ? theme.lineBlood : theme.stroke}
                         strokeWidth={2.8}
                       />
-                    );
+                    ));
                   })}
-                  <MarkerCircle cx={marker.x} cy={marker.y} r={MARKER_RADIUS} fill={theme.panel2} stroke={color} strokeWidth={3.5} />
-                  <LineSegment x1={marker.x - 13} y1={marker.y} x2={marker.x + 13} y2={marker.y} color={color} strokeWidth={4.5} />
-                  <LineSegment x1={marker.x} y1={marker.y - 13} x2={marker.x} y2={marker.y + 13} color={color} strokeWidth={4.5} />
+                  <MarkerCircle cx={marker.x} cy={marker.y} r={MARKER_RADIUS} rx={MARKER_RADIUS_X} fill={theme.panel2} stroke={color} strokeWidth={3.5} />
+                  {/* + for a current marriage, ✕ for an ended one: a shape that reads even where the red doesn't. */}
+                  {u.marriage.status === 'ended' ? (
+                    <>
+                      <LineSegment x1={marker.x - 11} y1={marker.y - 11} x2={marker.x + 11} y2={marker.y + 11} color={color} strokeWidth={4.5} />
+                      <LineSegment x1={marker.x - 11} y1={marker.y + 11} x2={marker.x + 11} y2={marker.y - 11} color={color} strokeWidth={4.5} />
+                    </>
+                  ) : (
+                    <>
+                      <LineSegment x1={marker.x - 19} y1={marker.y} x2={marker.x + 19} y2={marker.y} color={color} strokeWidth={4.5} />
+                      <LineSegment x1={marker.x} y1={marker.y - 13} x2={marker.x} y2={marker.y + 13} color={color} strokeWidth={4.5} />
+                    </>
+                  )}
                 </React.Fragment>
               );
             })}
@@ -623,9 +647,9 @@ export function TreeCanvas({
                 onPress={() => handleUnionPress(u.marriage)}
                 style={{
                   position: 'absolute',
-                  left: marker.x - MARKER_HIT / 2,
+                  left: marker.x - MARKER_HIT_X / 2,
                   top: marker.y - MARKER_HIT / 2,
-                  width: MARKER_HIT,
+                  width: MARKER_HIT_X,
                   height: MARKER_HIT,
                 }}
               />
@@ -645,15 +669,13 @@ export function TreeCanvas({
                 y={c.y}
                 width={cardWidth}
                 height={cardHeight}
-                nameFontSize={cardNameFontSize}
+                text={cardText(person, t('unknown'), cardStyle, cardWidth, cardHeight, metrics.nodeHeight, cardGrowth)}
                 cardStyle={cardStyle}
                 isRTL={isRTL}
                 showRibbon={showRibbon}
-                avatarSize={cardAvatarSize}
                 isSelected={isSelected}
                 colors={cardColors(person, theme)}
                 onPress={handlePersonPress}
-                unknownLabel={t('unknown')}
                 theme={theme}
                 styles={styles}
               />
@@ -765,15 +787,13 @@ function PersonCard({
   y,
   width,
   height,
-  nameFontSize,
-  avatarSize,
+  text,
   cardStyle,
   isRTL,
   showRibbon,
   isSelected,
   colors,
   onPress,
-  unknownLabel,
   theme,
   styles,
 }: {
@@ -783,15 +803,14 @@ function PersonCard({
   /** The tree's current (generation-depth-scaled) card size — see TreeCanvas's cardWidth/cardHeight. */
   width: number;
   height: number;
-  nameFontSize: number;
-  avatarSize: number;
+  /** What the card says and at what size, fitted to the card (see cardText). */
+  text: CardText;
   cardStyle: CardStyle;
   isRTL: boolean;
   showRibbon: boolean;
   isSelected: boolean;
   colors: { fill: string; stroke: string };
   onPress: (person: Person) => void;
-  unknownLabel: string;
   theme: Theme;
   styles: Styles;
 }) {
@@ -816,37 +835,33 @@ function PersonCard({
       ]}
     >
       {cardStyle === 'large' ? (
-        <Pressable style={({ pressed }) => [styles.cardTouchableLarge, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
-          {person.photoUri ? (
-            <Image source={{ uri: person.photoUri }} style={[styles.cardPhotoLarge, { width: avatarSize, height: avatarSize }]} />
-          ) : (
-            // No photo yet: the same square, holding their initial.
-            <View style={[styles.cardPhotoLarge, styles.cardPhotoPlaceholder, { width: avatarSize, height: avatarSize, borderColor: colors.stroke }]}>
-              <Text style={[styles.cardInitial, { color: colors.stroke, fontSize: avatarSize * 0.42 }]}>{person.unknown ? '?' : person.name.charAt(0)}</Text>
-            </View>
-          )}
+        <Pressable
+          style={({ pressed }) => [styles.cardTouchableLarge, !text.showPhoto && styles.cardTouchableLargeNoPhoto, pressed && styles.cardTouchablePressed]}
+          onPress={() => onPress(person)}
+        >
+          {/* A photo on top when there is one; without one, no placeholder, and the names fill the card. */}
+          {text.showPhoto && <Image source={{ uri: person.photoUri }} style={[styles.cardPhotoLarge, { width: text.photoSize, height: text.photoSize }]} />}
           <Text
             numberOfLines={1}
-            style={[styles.cardName, styles.cardNameLarge, { fontSize: nameFontSize }, person.unknown && { color: theme.inkFaint, fontSize: nameFontSize * 0.8 }]}
+            adjustsFontSizeToFit
+            ellipsizeMode="tail"
+            style={[styles.cardName, text.showPhoto && styles.cardNameLarge, styles.cardNameCentered, { fontSize: text.name.fontSize }, person.unknown && { color: theme.inkFaint }]}
           >
-            {person.unknown ? unknownLabel : person.name}
+            {text.name.text}
           </Text>
-          {!person.unknown && !!person.surname && (
-            <Text numberOfLines={1} style={[styles.cardSurname, { fontSize: nameFontSize * 0.7 }]}>
-              {person.surname}
+          {text.surname && (
+            <Text numberOfLines={1} adjustsFontSizeToFit ellipsizeMode="tail" style={[styles.cardSurname, { fontSize: text.surname.fontSize }]}>
+              {text.surname.text}
             </Text>
           )}
         </Pressable>
       ) : (
         <Pressable style={({ pressed }) => [styles.cardTouchable, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
-          {person.photoUri && (
-            <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: avatarSize, height: avatarSize, borderRadius: avatarSize / 2 }]} />
+          {text.showPhoto && (
+            <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: text.photoSize, height: text.photoSize, borderRadius: text.photoSize / 2 }]} />
           )}
-          <Text
-            numberOfLines={1}
-            style={[styles.cardName, { fontSize: nameFontSize }, person.unknown && { color: theme.inkFaint, fontSize: nameFontSize * 0.75 }]}
-          >
-            {person.unknown ? unknownLabel : person.name}
+          <Text numberOfLines={1} adjustsFontSizeToFit ellipsizeMode="tail" style={[styles.cardName, { fontSize: text.name.fontSize }, person.unknown && { color: theme.inkFaint }]}>
+            {text.name.text}
           </Text>
         </Pressable>
       )}
@@ -884,7 +899,7 @@ function createStyles(theme: Theme) {
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingHorizontal: 8,
+    paddingHorizontal: CARD_PADDING,
   },
   cardTouchablePressed: { opacity: 0.6 },
   cardTouchableLarge: {
@@ -893,12 +908,13 @@ function createStyles(theme: Theme) {
     alignItems: 'center',
     justifyContent: 'flex-start',
     paddingTop: 14,
-    paddingHorizontal: 10,
+    paddingHorizontal: CARD_PADDING,
   },
+  // No photo: the names sit in the middle of the card instead of under a photo.
+  cardTouchableLargeNoPhoto: { justifyContent: 'center', paddingTop: 0 },
   cardPhotoLarge: { borderRadius: 14, backgroundColor: theme.panel },
-  cardPhotoPlaceholder: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, opacity: 0.9 },
-  cardInitial: { fontWeight: '700' },
-  cardNameLarge: { marginTop: 10, textAlign: 'center' },
+  cardNameLarge: { marginTop: 10 },
+  cardNameCentered: { textAlign: 'center' },
   cardSurname: { color: theme.inkDim, fontWeight: '600', marginTop: 1, textAlign: 'center' },
   cardAvatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.panel },
   cardName: {

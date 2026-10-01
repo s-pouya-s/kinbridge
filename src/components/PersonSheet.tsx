@@ -18,6 +18,8 @@ interface Props {
   onClose: () => void;
   /** Opens this person's own family tree (see PersonTreeView). */
   onShowTree: (personId: string) => void;
+  /** Opens Find relationship with this person already chosen first, so only the other person is left to pick. */
+  onFindRelationship: (personId: string) => void;
 }
 
 /**
@@ -29,7 +31,7 @@ interface Props {
 const SCROLLBAR_INSET = 8;
 const SCROLLBAR_MIN_THUMB = 28;
 
-export function PersonSheet({ person, people, marriages, visible, onClose, onShowTree }: Props) {
+export function PersonSheet({ person, people, marriages, visible, onClose, onShowTree, onFindRelationship }: Props) {
   const { t, isRTL } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -116,18 +118,24 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
                   {!person.unknown && (
                     <Text style={[styles.dates, isRTL && styles.textEnd]}>
                       {person.born ? `${t('bornPrefix')} ${formatJalali(person.born)}` : t('birthYearUnknown')}
-                      {person.died ? ` · ${t('diedPrefix')} ${formatJalali(person.died)}` : isDeceased(person) ? ` · ${t('deceased')}` : ` · ${t('living')}`}
+                      {person.died ? ` · ${t('diedPrefix')} ${formatJalali(person.died)}` : isDeceased(person) ? ` · ${t('deceasedStatus')}` : ` · ${t('living')}`}
                     </Text>
                   )}
                 </View>
               </View>
 
-              <Pressable
-                style={({ pressed }) => [styles.treeButton, isRTL && styles.rowRTL, pressed && { opacity: 0.6 }]}
-                onPress={() => onShowTree(person.id)}
-              >
-                <Text style={styles.treeButtonText}>{t('showFamilyTree')}</Text>
-              </Pressable>
+              <View style={[styles.actions, isRTL && styles.rowRTL]}>
+                <Pressable style={({ pressed }) => [styles.treeButton, pressed && { opacity: 0.6 }]} onPress={() => onShowTree(person.id)}>
+                  <Text style={styles.treeButtonText} numberOfLines={1}>
+                    {t('showFamilyTree')}
+                  </Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.treeButton, pressed && { opacity: 0.6 }]} onPress={() => onFindRelationship(person.id)}>
+                  <Text style={styles.treeButtonText} numberOfLines={1}>
+                    {t('findRelationshipWith')}
+                  </Text>
+                </Pressable>
+              </View>
 
               {person.unknown ? (
                 <Text style={[styles.note, isRTL && styles.textEnd]}>{t('noInfoRecorded')}</Text>
@@ -256,14 +264,17 @@ function createStyles(theme: Theme) {
   fieldValue: { color: theme.ink, fontSize: 14 },
   albumStrip: { gap: 10, paddingVertical: 4 },
   albumThumb: { width: 104, height: 104, borderRadius: 12, backgroundColor: theme.panel2 },
+  // The person's two lookups, side by side: their own tree, and how they're related to someone.
+  actions: { flexDirection: 'row', gap: 10, marginBottom: 16 },
   treeButton: {
+    flex: 1,
     flexDirection: 'row',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: theme.lineMarriage,
     borderRadius: 12,
     paddingVertical: 10,
-    marginBottom: 16,
+    paddingHorizontal: 6,
   },
   treeButtonText: { color: theme.lineMarriage, fontSize: 14, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },

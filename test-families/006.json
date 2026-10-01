@@ -1,0 +1,1 @@
+{"name":"family 006 (2 people)","situations":["marriage with no children"],"data":{"people":[{"id":"p0","name":"Eva","gender":"female","surname":"Knoll","born":"1901-12-18"},{"id":"p1","name":"Zoe","gender":"female","born":"1892-01-04"}],"marriages":[{"id":"m0","spouseIds":["p0","p1"],"status":"current","childIds":[]}]}}

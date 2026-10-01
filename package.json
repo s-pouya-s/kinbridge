@@ -43,7 +43,12 @@
     "check:jalali": "tsx scripts/checkJalali.ts",
     "check:mutations": "tsx scripts/checkMutations.ts",
     "check:migrate": "tsx scripts/checkMigrate.ts",
-    "check:launchAd": "tsx scripts/checkLaunchAd.ts"
+    "check:launchAd": "tsx scripts/checkLaunchAd.ts",
+    "check:local": "tsx scripts/checkLocalFamily.ts",
+    "check:families": "tsx scripts/checkFamilies.ts",
+    "generate:families": "tsx scripts/generateFamilies.ts",
+    "check:all": "npm run -s typecheck && npm run -s check:parentChild && npm run -s check:families && npm run -s check:layout && npm run -s check:mutations && npm run -s check:migrate && npm run -s check:jalali && npm run -s check:launchAd && npm run -s check:local",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "private": true
 }

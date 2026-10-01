@@ -39,12 +39,20 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
   const [marriedYear, setMarriedYear] = useState('');
   const [endedYear, setEndedYear] = useState('');
 
+  // Filled from the saved marriage when the sheet opens, or switches to a
+  // different marriage, and never again while it's open. Adding or removing
+  // a child saves straight away and hands back a new marriage object; keyed
+  // on that object, the form reset itself and threw away what was picked
+  // but not saved yet (a real, previously-shipped bug: an ended marriage
+  // turned back to current as soon as a child was added).
+  const marriageId = marriage?.id;
   useEffect(() => {
     if (!marriage || !visible) return;
     setStatus(marriage.status);
     setMarriedYear(marriage.marriedYear != null ? String(marriage.marriedYear) : '');
     setEndedYear(marriage.endedYear != null ? String(marriage.endedYear) : '');
-  }, [marriage, visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marriageId, visible]);
 
   if (!marriage) return null;
   const byId = new Map(people.map((p) => [p.id, p]));

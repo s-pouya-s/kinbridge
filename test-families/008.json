@@ -1,0 +1,1 @@
+{"name":"family 008 (2 people)","situations":["marriage with no children","several founding families"],"data":{"people":[{"id":"p0","name":"Zoe","gender":"female","surname":"Stone","deceased":true},{"id":"p1","name":"Hana","gender":"female","surname":"Thorn","born":"1896-10-08","deceased":true}],"marriages":[{"id":"m0","spouseIds":["p0","p1"],"status":"current","childIds":[]}]}}

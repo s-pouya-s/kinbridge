@@ -34,6 +34,10 @@ export function LineSegment({
   const length = Math.hypot(dx, dy);
   if (length === 0) return null;
   const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  // Dashed (an ended marriage): real dashes at full color, each a small
+  // View along the rotated line. Fading the whole line instead (what this
+  // once did) made the red of an ended marriage nearly invisible.
+  const dashes = dashed ? Math.ceil(length / (DASH + GAP)) : 0;
   return (
     <View
       style={{
@@ -42,11 +46,20 @@ export function LineSegment({
         top: y1 - strokeWidth / 2,
         width: length,
         height: strokeWidth,
-        backgroundColor: color,
-        opacity: dashed ? 0.55 : 1,
+        backgroundColor: dashed ? undefined : color,
+        flexDirection: 'row',
+        overflow: 'hidden',
         transform: [{ rotate: `${angleDeg}deg` }],
         transformOrigin: '0% 50%',
       }}
-    />
+    >
+      {Array.from({ length: dashes }, (_, i) => (
+        <View key={i} style={{ width: DASH, height: strokeWidth, marginRight: GAP, backgroundColor: color }} />
+      ))}
+    </View>
   );
 }
+
+/** A dashed line's dash and the gap after it. */
+const DASH = 10;
+const GAP = 7;

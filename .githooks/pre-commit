@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs every check before each commit; a failing check stops the commit.
+# See AGENTS.md, "Checks". Set up by `npm install` (the "prepare" script).
+npm run -s check:all
