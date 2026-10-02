@@ -54,6 +54,8 @@ interface Props {
   translateX: SharedValue<number>;
   translateY: SharedValue<number>;
   selectedId?: ID;
+  /** With someone selected: the people connected to them, kept in their own colors; everyone else turns gray, so they're easy to find. */
+  connectedIds?: Set<ID>;
   isRTL: boolean;
   theme: Theme;
 }
@@ -80,7 +82,7 @@ interface Props {
  * same. The camera is set directly, never animated (withTiming never landed
  * on real phones), and stays within the canvas's own limits (clampAxis).
  */
-export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, cardHeight, viewport, scale, translateX, translateY, selectedId, isRTL, theme }: Props) {
+export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, cardHeight, viewport, scale, translateX, translateY, selectedId, connectedIds, isRTL, theme }: Props) {
   const styles = useMemo(() => createStyles(theme), [theme]);
   const vw = viewport.width;
   const vh = viewport.height;
@@ -158,7 +160,7 @@ export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, 
                 width: miniCardWidth,
                 height: miniCardHeight,
                 borderRadius: Math.min(miniCardWidth, miniCardHeight) / 3,
-                backgroundColor: c.id === selectedId ? theme.selected : c.color,
+                backgroundColor: c.id === selectedId ? theme.selected : selectedId && !connectedIds?.has(c.id) ? theme.stroke : c.color,
               },
             ]}
           />

@@ -72,6 +72,8 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 - Tapping a card highlights that person's lines. Tapping empty space clears the highlight, and every line goes back to its normal color (a background `Pressable` in TreeCanvas; the content box is `box-none` so empty spots reach it).
 
+- With someone selected, the tree and the minimap turn every card gray except the people connected to them (tree cards: `theme.panel2` fill, `theme.stroke` outline, no raise, contents at 55%; minimap: `theme.stroke`): exactly the ends of the lines that stay colored (spouses, children, parents, brothers and sisters; `connectedIds` in TreeCanvas). The selected card stays `theme.selected`.
+
 ## Marriage marker
 
 - The ⊕ is an oval, wider than it is tall: `MARKER_RADIUS_X` (1.6 × `MARKER_RADIUS`) across, `MARKER_RADIUS` up and down, with a much wider tap area than the oval (`MARKER_HIT_X`, 150: under a column's width, so it never reaches the next marker on its row; its height stays `MARKER_HIT`, under `UNION_LANE_STEP`). Its height stays `MARKER_RADIUS` so the spacing between marriage bars doesn't change. The PDF draws the same oval.
@@ -263,7 +265,9 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Builds
 
-- `.github/workflows/preview-apk.yml` builds the preview APK on GitHub's runner (`eas build --local --profile preview`), after `npm run check:all`, and uploads it as the `kinbridge-preview-apk` artifact. It runs on every push to `main` and by hand (workflow_dispatch). It needs the repository secret `EXPO_TOKEN`.
+- `.github/workflows/preview-apk.yml` builds the preview APK entirely on GitHub's runner, with no Expo or other outside build service: `npx expo prebuild`, then Gradle `assembleRelease`, after `npm run check:all`, and uploads it as the `kinbridge-preview-apk` artifact. It runs on every push to `main` and by hand (workflow_dispatch). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
+- Pipeline signing: with the secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`, the APK is re-signed with that key (`apksigner`); without them it keeps Gradle's debug signature. It sets `EXPO_PUBLIC_ADS_TEST=1`, like the preview profile.
+- `expo prebuild` rewrites the `android`/`ios` scripts in package.json; don't commit that (the owner runs the app through Expo Go).
 - Cloud builds on EAS: `npx eas build --profile preview --platform android`. The preview profile must keep `EXPO_PUBLIC_ADS_TEST=1` (see Ads).
 
 ## Checks

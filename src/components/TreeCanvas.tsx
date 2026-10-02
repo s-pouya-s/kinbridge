@@ -493,6 +493,21 @@ export function TreeCanvas({
     ],
   }));
 
+  // Everyone joined to the selected person by a line that stays colored
+  // while they're selected (see isConnected below): spouses and children
+  // through their own marriages, parents and brothers and sisters through
+  // their parents' marriage. The minimap keeps these in color.
+  const connectedIds = useMemo(() => {
+    if (!selectedPersonId) return undefined;
+    const ids = new Set<ID>([selectedPersonId]);
+    for (const m of data.marriages) {
+      if (!m.spouseIds.includes(selectedPersonId) && !m.childIds.includes(selectedPersonId)) continue;
+      m.spouseIds.forEach((id) => ids.add(id));
+      m.childIds.forEach((id) => ids.add(id));
+    }
+    return ids;
+  }, [selectedPersonId, data.marriages]);
+
   const minimapCards = useMemo<MinimapCard[]>(
     () =>
       data.people.flatMap((person) => {
@@ -674,6 +689,7 @@ export function TreeCanvas({
                 isRTL={isRTL}
                 showRibbon={showRibbon}
                 isSelected={isSelected}
+                dimmed={!!connectedIds && !connectedIds.has(person.id)}
                 colors={cardColors(person, theme)}
                 onPress={handlePersonPress}
                 theme={theme}
@@ -742,6 +758,7 @@ export function TreeCanvas({
         translateX={translateX}
         translateY={translateY}
         selectedId={selectedPersonId}
+        connectedIds={connectedIds}
         isRTL={isRTL}
         theme={theme}
       />
@@ -792,6 +809,7 @@ function PersonCard({
   isRTL,
   showRibbon,
   isSelected,
+  dimmed,
   colors,
   onPress,
   theme,
@@ -809,6 +827,8 @@ function PersonCard({
   isRTL: boolean;
   showRibbon: boolean;
   isSelected: boolean;
+  /** Someone else is selected and this person isn't connected to them: drawn gray, like the lines (see connectedIds). */
+  dimmed: boolean;
   colors: { fill: string; stroke: string };
   onPress: (person: Person) => void;
   theme: Theme;
@@ -824,16 +844,17 @@ function PersonCard({
           top: y - height / 2,
           width,
           height,
-          borderColor: isSelected ? theme.selected : colors.stroke,
+          borderColor: isSelected ? theme.selected : dimmed ? theme.stroke : colors.stroke,
           borderWidth: isSelected ? 2.5 : person.unknown ? 1.5 : 1,
           borderStyle: person.unknown ? 'dashed' : 'solid',
           // Selected turns the whole card green, not just its outline.
-          backgroundColor: isSelected ? theme.selectedFill : colors.fill,
-          // See raisedCardStyle. An unknown person's card stays flat, as a placeholder.
-          ...(person.unknown ? null : raisedCardStyle(isSelected ? theme.selectedFill : colors.fill, theme)),
+          backgroundColor: isSelected ? theme.selectedFill : dimmed ? theme.panel2 : colors.fill,
+          // See raisedCardStyle. An unknown person's card stays flat, as a placeholder; so does a grayed one.
+          ...(person.unknown || dimmed ? null : raisedCardStyle(isSelected ? theme.selectedFill : colors.fill, theme)),
         },
       ]}
     >
+      <View style={[StyleSheet.absoluteFill, dimmed && { opacity: 0.55 }]}>
       {cardStyle === 'large' ? (
         <Pressable
           style={({ pressed }) => [styles.cardTouchableLarge, !text.showPhoto && styles.cardTouchableLargeNoPhoto, pressed && styles.cardTouchablePressed]}
@@ -866,6 +887,7 @@ function PersonCard({
         </Pressable>
       )}
       {showRibbon && isDeceased(person) && <MourningRibbon radius={15} side="left" thickness={cardStyle === 'large' ? 16 : 11} />}
+      </View>
     </Animated.View>
   );
 }
