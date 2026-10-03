@@ -4,8 +4,10 @@
 #
 #   kinbridge-phone      the Bazaar version with test ads, arm64 only (small),
 #                        to install on the owner's own phone.
-#   kinbridge-bazaar     the signed release app bundle (.aab) for the Cafe
-#                        Bazaar console.
+#   kinbridge-bazaar     for the Cafe Bazaar console: the signed release app
+#                        bundle (kinbridge-bazaar.aab) and Bazaar's signed
+#                        digest of it (kinbridge-bazaar.bin), made with
+#                        Bazaar's own bundle-signer (see bazaar-release/README.md).
 #   kinbridge-galaxy     the Galaxy Store release APK ("Family Tree", opens in
 #                        the phone's language or English), every chip type.
 #
@@ -138,6 +140,22 @@ jobs:
             -sigalg SHA256withRSA -digestalg SHA-256 \
             -signedjar out/kinbridge-bazaar.aab "$AAB" bazaar
           jarsigner -verify out/kinbridge-bazaar.aab | tail -1
+
+      - name: Make Bazaar's signed .bin
+        if: matrix.target == 'bazaar'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p tools
+          gh release download --repo cafebazaar/bundle-signer --pattern "*.jar" -D tools
+          java -jar tools/*.jar genbin -v \
+            --bundle out/kinbridge-bazaar.aab \
+            --bin out/ \
+            --v2-signing-enabled true \
+            --v3-signing-enabled false \
+            --key "$RUNNER_TEMP/key.pk8" \
+            --cert bazaar-release/cert.pem
+          ls -la out
 
       - name: Remove the key
         if: always()

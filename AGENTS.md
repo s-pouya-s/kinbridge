@@ -293,8 +293,9 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 - `.github/workflows/release-builds.yml` runs on every push to `main` and by hand (workflow_dispatch). After `npm run check:all` it builds three files, entirely on GitHub's runner with no Expo or other outside build service (`npx expo prebuild`, then Gradle). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
   - `kinbridge-phone`: the Bazaar version with test ads (`EXPO_PUBLIC_ADS_TEST=1`), arm64 only, for the owner's own phone.
-  - `kinbridge-bazaar`: the release app bundle (`.aab`) for the Cafe Bazaar console, signed with `jarsigner` using a keystore made on the spot from the key and `cert.pem`, after stripping Gradle's debug signature (so it carries only the Bazaar signature).
+  - `kinbridge-bazaar`: for the Cafe Bazaar console, both the release app bundle (`kinbridge-bazaar.aab`, signed with `jarsigner` using a keystore made on the spot from the key and `cert.pem`, after stripping Gradle's debug signature) and Bazaar's signed digest of it (`kinbridge-bazaar.bin`, made with Bazaar's bundle-signer `genbin`).
   - `kinbridge-galaxy`: the Galaxy Store release APK, every chip type.
+- Expo (EAS) builds use the same Bazaar key: it's the default Android keystore in the project's EAS credentials (alias `bazaar`, SHA-256 `99:B3:11:22…`). Expo's earlier generated key is still listed there but not used.
 - One signing identity for all three: the Bazaar key. The repository secret `BAZAAR_SIGNING_KEY` holds the private key (the PEM text of `.ssh-key`), and `bazaar-release/cert.pem` is its certificate; the pipeline checks they match and fails clearly if the secret is missing. So the phone APK installs as an update over the Bazaar install, and the Galaxy app has the same identity. Never sign with any other key.
 - The pipeline sets the version code to 100 plus the run number (`ANDROID_VERSION_CODE`, read by app.config.js), so every build is newer than the last upload. Other builds keep app.json's.
 - `expo prebuild` rewrites the `android`/`ios` scripts in package.json; don't commit that (the owner runs the app through Expo Go).

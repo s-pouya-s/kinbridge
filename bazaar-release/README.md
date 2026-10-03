@@ -27,9 +27,10 @@ Cafe Bazaar now takes the app bundle (`.aab`) itself. Every push to `main`
 runs `.github/workflows/release-builds.yml`, which builds the release bundle
 and signs it with this key (kept as the repository secret
 `BAZAAR_SIGNING_KEY`, the PEM text of `.ssh-key`) and `cert.pem`. Download
-the `kinbridge-bazaar` artifact from the run and upload its
-`kinbridge-bazaar.aab`. The `.bin` steps below are the older way, kept for
-reference.
+the `kinbridge-bazaar` artifact from the run: it has both the signed
+`kinbridge-bazaar.aab` and Bazaar's signed digest `kinbridge-bazaar.bin`
+(made with the steps below), so upload whichever the console asks for.
+The steps below are for doing it by hand.
 
 ## Regenerating `app.bin` for a new release
 
