@@ -9,6 +9,7 @@ import { FAMILY_GAP } from '../layout/parentChildLayout';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { TreeCanvas } from './TreeCanvas';
+import { fullName } from '../model/people';
 
 interface Props {
   data: FamilyData;
@@ -39,7 +40,7 @@ export function PersonTreeView({ data, personId, cardStyle, showMinimap, showRib
 
   const tree = useMemo(() => (focusId ? personTreeData(data, focusId) : null), [data, focusId]);
   const person = focusId ? data.people.find((p) => p.id === focusId) : undefined;
-  const name = !person ? '' : person.unknown ? t('unknown') : [person.name, person.surname].filter(Boolean).join(' ');
+  const name = !person ? '' : fullName(person, t('unknown'));
 
   return (
     <Modal statusBarTranslucent navigationBarTranslucent visible={personId != null} animationType="slide" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>

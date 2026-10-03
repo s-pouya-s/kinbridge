@@ -4,6 +4,8 @@ import type { Marriage, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
+import { marriageYearForDisplay } from '../utils/calendar';
+import { localDigits } from '../i18n/locales';
 
 interface Props {
   marriage: Marriage | null;
@@ -17,7 +19,7 @@ interface Props {
  * it doesn't open anything editable.
  */
 export function MarriageSheet({ marriage, people, visible, onClose }: Props) {
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
@@ -48,9 +50,9 @@ export function MarriageSheet({ marriage, people, visible, onClose }: Props) {
               </View>
 
               <View style={styles.body}>
-                <Field styles={styles} label={t('married')} value={marriage.marriedYear != null ? String(marriage.marriedYear) : t('yearUnknown')} isRTL={isRTL} />
+                <Field styles={styles} label={t('married')} value={marriage.marriedYear != null ? localDigits(marriageYearForDisplay(marriage.marriedYear, locale)!, locale) : t('yearUnknown')} isRTL={isRTL} />
                 {marriage.status === 'ended' && (
-                  <Field styles={styles} label={t('divorced')} value={marriage.endedYear != null ? String(marriage.endedYear) : t('yearUnknown')} isRTL={isRTL} />
+                  <Field styles={styles} label={t('divorced')} value={marriage.endedYear != null ? localDigits(marriageYearForDisplay(marriage.endedYear, locale)!, locale) : t('yearUnknown')} isRTL={isRTL} />
                 )}
               </View>
             </>

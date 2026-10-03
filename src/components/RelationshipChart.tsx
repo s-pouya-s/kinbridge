@@ -10,7 +10,7 @@ import { LineSegment } from './LineSegment';
 import { cardColors, raisedCardStyle } from './cardLook';
 import { ZoomableView } from './ZoomableView';
 import { MourningRibbon } from './MourningRibbon';
-import { isDeceased } from '../model/people';
+import { isDeceased, shortName } from '../model/people';
 
 const CARD_WIDTH = 156;
 const CARD_HEIGHT = 84;
@@ -60,7 +60,7 @@ export function RelationshipChart({ data, routes, onClose, showRibbon }: Props) 
   const nodeById = new Map(chart?.nodes.map((n) => [n.personId, n]) ?? []);
   const nameOf = (id?: ID) => {
     const p = id ? byId.get(id) : undefined;
-    return !p || p.unknown ? t('unknown') : p.name;
+    return !p ? t('unknown') : shortName(p, t('unknown'));
   };
 
   const first = path?.[0]?.personId;

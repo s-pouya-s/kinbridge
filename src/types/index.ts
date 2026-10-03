@@ -11,6 +11,8 @@ export interface Person {
   id: ID;
   name: string;
   surname?: string;
+  /** What the family calls them, shown in brackets after the name: "Robert (Bob)". */
+  nickname?: string;
   /** Optional on purpose — used only to color the card; unset renders neutrally. */
   gender?: Gender;
   /**
@@ -94,6 +96,14 @@ export interface Marriage {
    * layout/siblings.ts.
    */
   manualChildOrder?: boolean;
+  /**
+   * Children born together: twins, triplets, or any number more. Each group
+   * is two or more of this marriage's childIds, and no child is in two
+   * groups. They always sit side by side, and their line from the ⊕ comes
+   * down as one thicker line that splits to each of them (see
+   * makeUnionRouter). See groupsOf for the cleaned-up groups.
+   */
+  multipleBirths?: ID[][];
 }
 
 export interface FamilyData {

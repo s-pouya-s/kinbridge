@@ -4,6 +4,8 @@ import type { Marriage, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
+import { fullName } from '../model/people';
+import { useKeyboardHeight } from '../utils/useKeyboardHeight';
 
 interface Props {
   visible: boolean;
@@ -27,6 +29,8 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
   // insets itself — otherwise its last row sits under the back/home bar.
   const insets = useSafeAreaInsets();
+  // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
+  const keyboardHeight = useKeyboardHeight();
   const [query, setQuery] = useState('');
   const byId = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
 
@@ -34,7 +38,7 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
     const name = (id: string) => {
       const p = byId.get(id);
       if (!p) return t('unknown');
-      return p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' ');
+      return fullName(p, t('unknown'));
     };
     return `${name(m.spouseIds[0])} ${t('and')} ${name(m.spouseIds[1])}`;
   };
@@ -51,7 +55,7 @@ export function MarriagePicker({ visible, title, marriages, people, onSelect, on
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
+      <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <Text style={[styles.title, isRTL && styles.textEnd]}>{title}</Text>

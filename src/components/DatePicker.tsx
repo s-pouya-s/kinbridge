@@ -3,17 +3,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
-import {
-  JALALI_MONTH_NAMES,
-  JALALI_WEEKDAY_SHORT,
-  isoToJalali,
-  jalaliMonthLength,
-  jalaliToIso,
-  jalaliWeekdayIndex,
-  toPersianDigits,
-  todayJalali,
-  type IsoDate,
-} from '../utils/jalali';
+import type { IsoDate } from '../utils/jalali';
+import { calendarFor } from '../utils/calendar';
 
 interface Props {
   visible: boolean;
@@ -29,52 +20,54 @@ const YEAR_RANGE_FUTURE = 10;
 const YEAR_ROW_HEIGHT = 44;
 
 /**
- * A real month-grid calendar in the Jalali (Iranian Shamsi) system —
- * everything is picked in Jalali and converted to/from a stored Gregorian
- * ISO date at the boundary (see src/utils/jalali.ts), so the rest of the
- * app never has to think about which calendar a date came from.
+ * A real month-grid calendar in the current language's calendar: Shamsi in
+ * Persian, Gregorian otherwise (see calendarFor). Dates are picked in that
+ * calendar and converted to/from the stored Gregorian ISO date at the
+ * boundary, so the rest of the app never has to think about which calendar
+ * a date came from.
  *
  * The month/year header are dropdowns, not step arrows — stepping a
  * hundred-plus years one at a time to reach an old birth date was the
  * exact complaint this replaced.
  */
-export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: Props) {
-  const { t, isRTL } = useI18n();
+export function DatePicker({ visible, title, value, onClose, onChange }: Props) {
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
   // insets itself — otherwise its last row sits under the back/home bar.
   const insets = useSafeAreaInsets();
-  const today = todayJalali();
-  const selected = isoToJalali(value);
+  const cal = calendarFor(locale);
+  const today = cal.today();
+  const selected = cal.fromIso(value);
 
-  const [viewYear, setViewYear] = useState(selected?.jy ?? today.jy);
-  const [viewMonth, setViewMonth] = useState(selected?.jm ?? today.jm);
+  const [viewYear, setViewYear] = useState(selected?.y ?? today.y);
+  const [viewMonth, setViewMonth] = useState(selected?.m ?? today.m);
   const [pickerView, setPickerView] = useState<'days' | 'months' | 'years'>('days');
   const yearListRef = useRef<ScrollView>(null);
 
   const years = useMemo(() => {
     const list: number[] = [];
-    for (let y = today.jy + YEAR_RANGE_FUTURE; y >= today.jy - YEAR_RANGE_PAST; y--) list.push(y);
+    for (let y = today.y + YEAR_RANGE_FUTURE; y >= today.y - YEAR_RANGE_PAST; y--) list.push(y);
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (!visible) return;
-    const d = isoToJalali(value);
-    setViewYear(d?.jy ?? today.jy);
-    setViewMonth(d?.jm ?? today.jm);
+    const d = cal.fromIso(value);
+    setViewYear(d?.y ?? today.y);
+    setViewMonth(d?.m ?? today.m);
     setPickerView('days');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, value]);
 
-  const daysInMonth = jalaliMonthLength(viewYear, viewMonth);
-  const leadingBlanks = jalaliWeekdayIndex(viewYear, viewMonth, 1);
+  const daysInMonth = cal.monthLength(viewYear, viewMonth);
+  const leadingBlanks = cal.weekColumn(viewYear, viewMonth, 1);
   const cells: (number | null)[] = [...Array(leadingBlanks).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
 
   const selectDay = (day: number) => {
-    onChange(jalaliToIso(viewYear, viewMonth, day));
+    onChange(cal.toIso(viewYear, viewMonth, day));
     onClose();
   };
 
@@ -102,11 +95,11 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
             <>
               <View style={[styles.nav, isRTL && styles.rowRTL]}>
                 <Pressable style={styles.dropdownButton} onPress={() => setPickerView('months')}>
-                  <Text style={styles.dropdownButtonText}>{JALALI_MONTH_NAMES[viewMonth - 1]}</Text>
+                  <Text style={styles.dropdownButtonText}>{cal.monthNames[viewMonth - 1]}</Text>
                   <Text style={styles.dropdownCaret}>▾</Text>
                 </Pressable>
                 <Pressable style={styles.dropdownButton} onPress={openYearList}>
-                  <Text style={styles.dropdownButtonText}>{toPersianDigits(viewYear)}</Text>
+                  <Text style={styles.dropdownButtonText}>{cal.digits(viewYear)}</Text>
                   <Text style={styles.dropdownCaret}>▾</Text>
                 </Pressable>
               </View>
@@ -115,7 +108,7 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
                   Friday-on-the-left — row-reverse mirrors both the header and
                   the grid together so the weekday columns still line up. */}
               <View style={[styles.weekRow, isRTL && styles.rowRTL]}>
-                {JALALI_WEEKDAY_SHORT.map((w, i) => (
+                {cal.weekdayShort.map((w, i) => (
                   <Text key={i} style={styles.weekLabel}>{w}</Text>
                 ))}
               </View>
@@ -123,15 +116,15 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
               <View style={[styles.grid, isRTL && styles.rowRTL]}>
                 {cells.map((day, i) => {
                   if (day == null) return <View key={i} style={styles.cell} />;
-                  const isSelected = !!selected && selected.jy === viewYear && selected.jm === viewMonth && selected.jd === day;
-                  const isToday = today.jy === viewYear && today.jm === viewMonth && today.jd === day;
+                  const isSelected = !!selected && selected.y === viewYear && selected.m === viewMonth && selected.d === day;
+                  const isToday = today.y === viewYear && today.m === viewMonth && today.d === day;
                   return (
                     <Pressable
                       key={i}
                       style={[styles.cell, styles.dayCell, isSelected && styles.dayCellSelected, !isSelected && isToday && styles.dayCellToday]}
                       onPress={() => selectDay(day)}
                     >
-                      <Text style={[styles.dayText, isSelected && styles.dayTextSelected]}>{toPersianDigits(day)}</Text>
+                      <Text style={[styles.dayText, isSelected && styles.dayTextSelected]}>{cal.digits(day)}</Text>
                     </Pressable>
                   );
                 })}
@@ -141,7 +134,7 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
 
           {pickerView === 'months' && (
             <View style={styles.monthGrid}>
-              {JALALI_MONTH_NAMES.map((name, i) => {
+              {cal.monthNames.map((name, i) => {
                 const monthNum = i + 1;
                 const isActive = monthNum === viewMonth;
                 return (
@@ -173,7 +166,7 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
                       setPickerView('days');
                     }}
                   >
-                    <Text style={[styles.yearRowText, isActive && styles.yearRowTextActive]}>{toPersianDigits(y)}</Text>
+                    <Text style={[styles.yearRowText, isActive && styles.yearRowTextActive]}>{cal.digits(y)}</Text>
                   </Pressable>
                 );
               })}
@@ -183,7 +176,7 @@ export function ShamsiDatePicker({ visible, title, value, onClose, onChange }: P
           <View style={[styles.footer, isRTL && styles.rowRTL]}>
             {pickerView === 'days' ? (
               <>
-                <Pressable style={styles.footerButton} onPress={() => { const d = todayJalali(); onChange(jalaliToIso(d.jy, d.jm, d.jd)); onClose(); }}>
+                <Pressable style={styles.footerButton} onPress={() => { const d = cal.today(); onChange(cal.toIso(d.y, d.m, d.d)); onClose(); }}>
                   <Text style={styles.footerButtonText}>{t('today')}</Text>
                 </Pressable>
                 <Pressable style={styles.footerButton} onPress={() => { onChange(undefined); onClose(); }}>

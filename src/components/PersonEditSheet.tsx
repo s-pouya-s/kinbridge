@@ -4,13 +4,15 @@ import type { Gender, ID, Marriage, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
-import { formatJalali } from '../utils/jalali';
+import { calendarFor } from '../utils/calendar';
 import { pickPersonPhoto } from '../utils/photo';
 import { albumPhotoUri, pickAlbumPhotos } from '../utils/album';
-import { isDeceased } from '../model/people';
-import { ShamsiDatePicker } from './ShamsiDatePicker';
+import { fullName, isDeceased } from '../model/people';
+import { DatePicker } from './DatePicker';
 import { PersonPicker } from './PersonPicker';
 import { MarriagePicker } from './MarriagePicker';
+import { canBeChildOf } from '../model/mutations';
+import { useKeyboardHeight } from '../utils/useKeyboardHeight';
 
 interface Props {
   person: Person | null;
@@ -55,16 +57,19 @@ export function PersonEditSheet({
   onRemoveParents,
   onRemoveSpouse,
 }: Props) {
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
   // insets itself — otherwise its last row sits under the back/home bar.
   const insets = useSafeAreaInsets();
+  // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
+  const keyboardHeight = useKeyboardHeight();
   const [spousePickerOpen, setSpousePickerOpen] = useState(false);
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
+  const [nickname, setNickname] = useState('');
   const [gender, setGender] = useState<Gender | undefined>(undefined);
   const [photo, setPhoto] = useState<string | undefined>(undefined);
   const [born, setBorn] = useState<string | undefined>(undefined);
@@ -86,6 +91,7 @@ export function PersonEditSheet({
     if (!person || !visible) return;
     setName(person.name ?? '');
     setSurname(person.surname ?? '');
+    setNickname(person.nickname ?? '');
     setGender(person.gender);
     setPhoto(person.photoUri);
     setBorn(person.born);
@@ -105,12 +111,13 @@ export function PersonEditSheet({
   const byId = new Map(people.map((p) => [p.id, p]));
   const parentMarriage = marriages.find((m) => m.childIds.includes(person.id));
   const spouseMarriages = marriages.filter((m) => m.spouseIds.includes(person.id));
-  const parentCandidates = marriages.filter((m) => !m.spouseIds.includes(person.id) && !m.childIds.includes(person.id));
+  // Never a marriage of their own descendants (see canBeChildOf).
+  const parentCandidates = marriages.filter((m) => canBeChildOf({ people, marriages }, m.id, person.id));
 
   const personLabel = (id: ID) => {
     const p = byId.get(id);
     if (!p) return t('unknown');
-    return p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' ');
+    return fullName(p, t('unknown'));
   };
 
   const handleChoosePhoto = async () => {
@@ -128,6 +135,7 @@ export function PersonEditSheet({
     onSave({
       name: name.trim(),
       surname: surname.trim() || undefined,
+      nickname: nickname.trim() || undefined,
       gender,
       photoUri: photo,
       born,
@@ -148,7 +156,7 @@ export function PersonEditSheet({
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
+      <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
@@ -159,6 +167,9 @@ export function PersonEditSheet({
             </Field>
             <Field styles={styles} label={t('surname')} isRTL={isRTL}>
               <TextInput style={inputStyle} value={surname} onChangeText={setSurname} placeholder={t('surname')} placeholderTextColor={theme.inkFaint} />
+            </Field>
+            <Field styles={styles} label={t('nickname')} isRTL={isRTL}>
+              <TextInput style={inputStyle} value={nickname} onChangeText={setNickname} placeholder={t('nicknameHint')} placeholderTextColor={theme.inkFaint} />
             </Field>
 
             <Field styles={styles} label={t('gender')} isRTL={isRTL}>
@@ -211,7 +222,7 @@ export function PersonEditSheet({
                 <Field styles={styles} label={t('bornYear')} isRTL={isRTL}>
                   <Pressable style={styles.dateField} onPress={() => setActivePicker('born')}>
                     <Text style={[styles.dateFieldText, !born && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
-                      {born ? formatJalali(born) : t('selectDate')}
+                      {born ? calendarFor(locale).format(born) : t('selectDate')}
                     </Text>
                   </Pressable>
                 </Field>
@@ -221,7 +232,7 @@ export function PersonEditSheet({
                   <Field styles={styles} label={t('diedYear')} isRTL={isRTL}>
                     <Pressable style={styles.dateField} onPress={() => setActivePicker('died')}>
                       <Text style={[styles.dateFieldText, !died && styles.dateFieldPlaceholder, isRTL && styles.textEnd]}>
-                        {died ? formatJalali(died) : t('leaveEmptyIfUnknown')}
+                        {died ? calendarFor(locale).format(died) : t('leaveEmptyIfUnknown')}
                       </Text>
                     </Pressable>
                   </Field>
@@ -243,14 +254,14 @@ export function PersonEditSheet({
               </View>
             </View>
 
-            <ShamsiDatePicker
+            <DatePicker
               visible={activePicker === 'born'}
               title={t('bornYear')}
               value={born}
               onClose={() => setActivePicker(null)}
               onChange={setBorn}
             />
-            <ShamsiDatePicker
+            <DatePicker
               visible={activePicker === 'died'}
               title={t('diedYear')}
               value={died}

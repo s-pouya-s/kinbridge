@@ -1,0 +1,150 @@
+# Builds three ready-to-use files on every push to main (or by hand), all
+# entirely on GitHub's own runner, with no Expo or other outside build
+# service (expo prebuild generates the Android project, Gradle builds it):
+#
+#   kinbridge-phone      the Bazaar version with test ads, arm64 only (small),
+#                        to install on the owner's own phone.
+#   kinbridge-bazaar     the signed release app bundle (.aab) for the Cafe
+#                        Bazaar console.
+#   kinbridge-galaxy     the Galaxy Store release APK ("Family Tree", opens in
+#                        the phone's language or English), every chip type.
+#
+# Every file is signed with the one Bazaar signing key, so each installs as
+# an update over the others' installs: the repository secret
+# BAZAAR_SIGNING_KEY holds the private key (the PEM text of .ssh-key), and
+# bazaar-release/cert.pem is its certificate. Store builds use real ads;
+# the phone build uses test ads. Every build's version code is 100 plus the
+# run number, so each one is newer than the last upload.
+#
+# Every check runs first (npm run check:all), so a broken layout is never
+# built.
+name: Release builds
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-builds
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run every check
+        run: npm run -s check:all
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: phone
+            variant: bazaar
+            ads_test: '1'
+            gradle: assembleRelease -PreactNativeArchitectures=arm64-v8a
+          - target: bazaar
+            variant: bazaar
+            ads_test: ''
+            gradle: bundleRelease
+          - target: galaxy
+            variant: galaxy
+            ads_test: ''
+            gradle: assembleRelease
+    env:
+      EXPO_PUBLIC_APP_VARIANT: ${{ matrix.variant }}
+      EXPO_PUBLIC_ADS_TEST: ${{ matrix.ads_test }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # Always newer than the last upload (read by app.config.js).
+      - name: Set the version code
+        run: echo "ANDROID_VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+
+      - name: The signing key must be set
+        env:
+          BAZAAR_SIGNING_KEY: ${{ secrets.BAZAAR_SIGNING_KEY }}
+        run: |
+          if [ -z "$BAZAAR_SIGNING_KEY" ]; then
+            echo "::error::The repository secret BAZAAR_SIGNING_KEY isn't set (the PEM text of .ssh-key, the Bazaar signing key). Without it the files can't be signed to match Bazaar."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - run: npm ci
+
+      # The Android SDK comes preinstalled on GitHub's Ubuntu runners (ANDROID_HOME).
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Build
+        working-directory: android
+        run: ./gradlew ${{ matrix.gradle }} --no-daemon
+
+      - name: Prepare the Bazaar signing key
+        env:
+          BAZAAR_SIGNING_KEY: ${{ secrets.BAZAAR_SIGNING_KEY }}
+        run: |
+          printf '%s\n' "$BAZAAR_SIGNING_KEY" > "$RUNNER_TEMP/key.pem"
+          # apksigner takes the key as PKCS#8 DER; same key, re-encoded.
+          openssl pkcs8 -topk8 -inform PEM -in "$RUNNER_TEMP/key.pem" -outform DER -out "$RUNNER_TEMP/key.pk8" -nocrypt
+          # It must be the key behind bazaar-release/cert.pem, or Bazaar rejects the update.
+          diff <(openssl pkey -inform DER -in "$RUNNER_TEMP/key.pk8" -pubout) <(openssl x509 -in bazaar-release/cert.pem -noout -pubkey) > /dev/null \
+            || { echo "::error::BAZAAR_SIGNING_KEY doesn't match bazaar-release/cert.pem."; exit 1; }
+
+      - name: Sign the APK
+        if: matrix.target != 'bazaar'
+        run: |
+          mkdir -p out
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" sign --key "$RUNNER_TEMP/key.pk8" --cert bazaar-release/cert.pem \
+            --out "out/kinbridge-${{ matrix.target }}.apk" android/app/build/outputs/apk/release/app-release.apk
+          "$BUILD_TOOLS/apksigner" verify --print-certs "out/kinbridge-${{ matrix.target }}.apk" | head -3
+
+      - name: Sign the app bundle
+        if: matrix.target == 'bazaar'
+        run: |
+          mkdir -p out
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          # Gradle signs the release bundle with its debug key; strip that,
+          # so the bundle carries only the Bazaar signature.
+          zip -q -d "$AAB" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' || true
+          # jarsigner wants a keystore: one made on the spot from the key and
+          # bazaar-release/cert.pem, with a throwaway password.
+          PASS=$(openssl rand -hex 16)
+          openssl pkcs12 -export -inkey "$RUNNER_TEMP/key.pem" -in bazaar-release/cert.pem -name bazaar -out "$RUNNER_TEMP/bazaar.p12" -passout "pass:$PASS"
+          jarsigner -keystore "$RUNNER_TEMP/bazaar.p12" -storetype PKCS12 -storepass "$PASS" \
+            -sigalg SHA256withRSA -digestalg SHA-256 \
+            -signedjar out/kinbridge-bazaar.aab "$AAB" bazaar
+          jarsigner -verify out/kinbridge-bazaar.aab | tail -1
+
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/key.pk8" "$RUNNER_TEMP/key.pem" "$RUNNER_TEMP/bazaar.p12"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kinbridge-${{ matrix.target }}
+          path: out/
+          retention-days: 30

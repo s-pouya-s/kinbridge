@@ -25,6 +25,19 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "preview-galaxy": {
+      "extends": "preview",
+      "env": {
+        "EXPO_PUBLIC_ADS_TEST": "1",
+        "EXPO_PUBLIC_APP_VARIANT": "galaxy"
+      }
+    },
+    "production-galaxy": {
+      "extends": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_VARIANT": "galaxy"
+      }
     }
   },
   "submit": {

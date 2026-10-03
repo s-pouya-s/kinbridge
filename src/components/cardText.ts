@@ -1,4 +1,5 @@
 import type { CardStyle } from '../layout/layout';
+import { shortName } from '../model/people';
 
 /**
  * How a card's text fits: which lines it shows, at what size, cut where.
@@ -20,6 +21,11 @@ function charWidth(ch: string): number {
   if (code === 0x200c || code === 0x200d) return 0; // zero-width joiners (Persian half-space)
   if (ch === ' ') return 0.3;
   if ((code >= 0x0600 && code <= 0x06ff) || (code >= 0xfb50 && code <= 0xfeff)) return 0.58; // Persian and Arabic
+  // Chinese, Japanese and Korean characters, and full-width forms: a whole em each.
+  if ((code >= 0x2e80 && code <= 0x9fff) || (code >= 0xac00 && code <= 0xd7af) || (code >= 0xff00 && code <= 0xffef) || (code >= 0x3000 && code <= 0x30ff)) return 1.0;
+  if (code >= 0x0900 && code <= 0x097f) return 0.62; // Devanagari (Hindi)
+  if (code >= 0x0400 && code <= 0x04ff) return 0.66; // Cyrillic (Russian)
+  if (code >= 0x00c0 && code <= 0x024f) return 0.66; // Latin letters with accents (German, French, Turkish, ...)
   if ('iljtfrI.,\'|!:;'.includes(ch)) return 0.36;
   if ('MW'.includes(ch)) return 0.95;
   if ('mw'.includes(ch)) return 0.9;
@@ -77,7 +83,7 @@ export interface CardText {
  * cardSize), which makes cards and names a little bigger in deep trees.
  */
 export function cardText(
-  person: { name: string; surname?: string; unknown?: boolean; photoUri?: string },
+  person: { name: string; surname?: string; nickname?: string; unknown?: boolean; photoUri?: string },
   label: string,
   cardStyle: CardStyle,
   width: number,
@@ -85,7 +91,7 @@ export function cardText(
   nodeHeight: number,
   growth: number
 ): CardText {
-  const shown = person.unknown ? label : person.name;
+  const shown = shortName(person, label);
   // The card's 1px border on both sides, then a small padding. (A selected
   // card's thicker border is covered by adjustsFontSizeToFit.)
   const inner = width - 2 * 1 - 2 * CARD_PADDING;

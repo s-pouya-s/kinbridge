@@ -1,8 +1,9 @@
-import { orderedChildIds } from '../layout/siblings';
+import { groupsOf, orderedChildIds } from '../layout/siblings';
 import type { FamilyData, ID, Marriage, Person } from '../types';
 import { computeGenerations } from '../layout/generations';
 import { computeRowOrder } from '../layout/order';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
+import { ANY_DIGITS, toAsciiDigits } from '../i18n/locales';
 
 export function newId(prefix: string): ID {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -17,25 +18,28 @@ export interface NewPersonName {
   label: string;
   /** Turns the running number into digits for this language (Persian uses ۰-۹). */
   formatNumber?: (n: number) => string;
+  /** This label in every language, so numbering carries on across a language switch. */
+  knownLabels?: string[];
 }
 const ENGLISH_NEW_PERSON: NewPersonName = { label: 'New person' };
 
-/** Every label a placeholder name has ever used, so numbering continues across a language switch. */
-const PLACEHOLDER_NAME = /^(?:New person|فرد جدید) ([0-9۰-۹]+)$/;
-const toAsciiDigits = (s: string) => s.replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** "New person 1", "New person 2", ... — never reused, even across sessions or after renames/deletes, since it's always one past the highest number already present in `people`, whichever language that name was made in. Keeps multiple not-yet-named cards from all reading as an identical, indistinguishable "New person". */
-function nextBlankPersonNumber(people: Person[]): number {
+function nextBlankPersonNumber(people: Person[], naming: NewPersonName): number {
+  // Every label a placeholder name has been made with, in any language and digits.
+  const labels = [...new Set([naming.label, ...(naming.knownLabels ?? []), ENGLISH_NEW_PERSON.label, 'فرد جدید'])];
+  const placeholder = new RegExp(`^(?:${labels.map(escapeRegExp).join('|')}) (${ANY_DIGITS}+)$`);
   let max = 0;
   for (const p of people) {
-    const match = PLACEHOLDER_NAME.exec(p.name ?? '');
+    const match = placeholder.exec(p.name ?? '');
     if (match) max = Math.max(max, Number(toAsciiDigits(match[1])));
   }
   return max + 1;
 }
 
 function blankPerson(people: Person[], naming: NewPersonName = ENGLISH_NEW_PERSON): Person {
-  const n = nextBlankPersonNumber(people);
+  const n = nextBlankPersonNumber(people, naming);
   return { id: newId('p'), name: `${naming.label} ${naming.formatNumber ? naming.formatNumber(n) : n}` };
 }
 
@@ -97,7 +101,7 @@ export function deletePerson(data: FamilyData, personId: ID): FamilyData {
     people: data.people.filter((p) => p.id !== personId),
     marriages: data.marriages
       .filter((m) => !m.spouseIds.includes(personId))
-      .map((m) => (m.childIds.includes(personId) ? { ...m, childIds: m.childIds.filter((c) => c !== personId) } : m)),
+      .map((m) => (m.childIds.includes(personId) ? withoutChild(m, personId) : m)),
   };
 }
 
@@ -187,9 +191,38 @@ export function addChild(data: FamilyData, marriageId: ID, naming?: NewPersonNam
  * this couple's child. A true no-op (same reference) if they're already a
  * child of this marriage — this never duplicates.
  */
+/**
+ * Whether `personId` may become a child of this marriage. Not when they're
+ * one of its spouses, already have parents (a person has one set), or are
+ * an ancestor of either spouse: that would make someone their own ancestor,
+ * a loop the layout can't draw (whole branches vanished). Used by the
+ * "existing child" and "existing parents" pickers and by addExistingChild.
+ */
+export function canBeChildOf(data: FamilyData, marriageId: ID, personId: ID): boolean {
+  const marriage = data.marriages.find((m) => m.id === marriageId);
+  if (!marriage || marriage.spouseIds.includes(personId)) return false;
+  if (data.marriages.some((m) => m.childIds.includes(personId))) return false;
+  const descendants = new Set<ID>();
+  const stack = [personId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    for (const m of data.marriages) {
+      if (!m.spouseIds.includes(id)) continue;
+      for (const c of m.childIds) {
+        if (!descendants.has(c)) {
+          descendants.add(c);
+          stack.push(c);
+        }
+      }
+    }
+  }
+  return !marriage.spouseIds.some((s) => descendants.has(s));
+}
+
 export function addExistingChild(data: FamilyData, marriageId: ID, existingChildId: ID): FamilyData {
   const marriage = data.marriages.find((m) => m.id === marriageId);
   if (!marriage || marriage.childIds.includes(existingChildId)) return data;
+  if (!canBeChildOf(data, marriageId, existingChildId)) return data;
   const next = {
     ...data,
     marriages: data.marriages.map((m) => (m.id === marriageId ? { ...m, childIds: [...m.childIds, existingChildId] } : m)),
@@ -311,6 +344,48 @@ export function resetChildOrder(data: FamilyData, marriageId: ID): FamilyData {
 export function removeChildFromMarriage(data: FamilyData, marriageId: ID, childId: ID): FamilyData {
   return {
     ...data,
-    marriages: data.marriages.map((m) => (m.id === marriageId ? { ...m, childIds: m.childIds.filter((c) => c !== childId) } : m)),
+    marriages: data.marriages.map((m) => (m.id === marriageId ? withoutChild(m, childId) : m)),
+  };
+}
+
+/** The marriage without this child, in its children and its groups born together. */
+function withoutChild(m: Marriage, childId: ID): Marriage {
+  const next: Marriage = { ...m, childIds: m.childIds.filter((c) => c !== childId) };
+  if (m.multipleBirths) {
+    const groups = m.multipleBirths.map((g) => g.filter((c) => c !== childId)).filter((g) => g.length >= 2);
+    if (groups.length > 0) next.multipleBirths = groups;
+    else delete next.multipleBirths;
+  }
+  return next;
+}
+
+/**
+ * Links or unlinks two neighboring children as born together (the 🔗
+ * between them in the marriage form). Linking joins their groups into one,
+ * so linking down the list makes a group of any size. Unlinking splits the
+ * group between them; a part left with one child is no group at all.
+ */
+export function toggleBornTogether(data: FamilyData, marriageId: ID, aId: ID, bId: ID, peopleById: Map<ID, Person>): FamilyData {
+  const marriage = data.marriages.find((m) => m.id === marriageId);
+  if (!marriage || !marriage.childIds.includes(aId) || !marriage.childIds.includes(bId) || aId === bId) return data;
+  const groups = groupsOf(marriage);
+  const groupA = groups.find((g) => g.includes(aId));
+  const groupB = groups.find((g) => g.includes(bId));
+  let next: ID[][];
+  if (groupA && groupA === groupB) {
+    const order = orderedChildIds(marriage, peopleById).filter((id) => groupA.includes(id));
+    const cut = Math.max(order.indexOf(aId), order.indexOf(bId));
+    next = [...groups.filter((g) => g !== groupA), order.slice(0, cut), order.slice(cut)].filter((g) => g.length >= 2);
+  } else {
+    next = [...groups.filter((g) => g !== groupA && g !== groupB), [...(groupA ?? [aId]), ...(groupB ?? [bId])]];
+  }
+  return {
+    ...data,
+    marriages: data.marriages.map((m) => {
+      if (m.id !== marriageId) return m;
+      const updated: Marriage = { ...m, multipleBirths: next };
+      if (next.length === 0) delete updated.multipleBirths;
+      return updated;
+    }),
   };
 }

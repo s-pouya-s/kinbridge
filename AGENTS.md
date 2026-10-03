@@ -41,7 +41,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - No reserved space for someone's descendants. Branches are packed row by row: a childless person sits right beside a sibling, even if that sibling's many children spread out underneath them.
 - Separate founding families (for example one headed by one founder couple and one by another) keep at least 3 empty card-widths between them where they come closest, on every row (`ROOT_FAMILY_GAP`).
 - **Nothing ever crosses a card.** No line may pass through any card except the cards it connects. Fix a crossing by moving cards, never by bending a line.
-- Lines are always straight. A spouse's line goes straight down from their card to the marriage bar, the bar runs straight across, and a child's line is one straight line from the ⊕ to the top of the child's card (`makeUnionRouter` in src/layout/routes.ts, shared by the canvas, minimap and PDF).
+- Lines are always straight. A spouse's line goes straight down from their card to the marriage bar, the bar runs straight across, and a child's line is one straight line from the ⊕ to the top of the child's card (`makeUnionRouter` in src/layout/routes.ts, shared by the canvas, minimap and PDF). The one exception is children born together (below).
 - A spouse on a higher row than their marriage bar has a line running down through the rows in between; the cells right under them on those rows stay empty (`dropUntil`). The couple moves together to find such a column. A kept-empty cell is a single hole: other cards may sit right beside it on both sides, and no family gap is kept around it, so it costs as little space as possible.
 - A child moved down a row by hand sits directly under their parent (just past the couple, if the parent's own line goes down), with those columns kept empty on the rows in between. Several lowered children are packed together like siblings.
 - The ⊕ moves to another half-cell between the spouses when a child's line from its usual spot would cross a card.
@@ -68,15 +68,24 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `npm run check:families` runs every layout rule (scripts/lib/familyRules.ts) over all of them, and makes sure every kind of situation is still covered.
 - Every commit runs `npm run check:all` first (.githooks/pre-commit, set up by `npm install`). Don't skip it with `--no-verify`.
 
+## Children born together (twins, triplets, ...)
+
+- `Marriage.multipleBirths`: groups of two or more of the marriage's children, any size (twins up to quintuplets and beyond), each child in one group at most. Always read them through `groupsOf` (src/layout/siblings.ts), which drops anything invalid; loading cleans them too (`normalizeFamilyData`).
+- They always sit side by side: `orderedChildIds` and the layout's `bloodChildrenOf` run `keepBornTogether`, so a hand-set order or a birth-date sort can't split them. `check:families` checks no brother or sister sits between them.
+- Drawn as a split line: from the ⊕ one thicker line (`trunks`, 4.5 wide, blood-line color) down to a point above the middle of the group, 60% of the way to their cards, then one line to each. Members on different rows (one moved down by hand) get plain straight lines. Trunks follow every other line rule and are checked for crossing cards too.
+- Marked in the marriage form's children list: the link button between two neighbors links them (joining their groups) or unlinks them (splitting the group; a part of one is no group) (`toggleBornTogether`). Each group sits in its own tinted box (`groupBox`, gold at low opacity), like the language list, and drags as one block: dragging any of its rows moves the whole group, and only whole blocks move aside, so nothing can be dropped between them (`orderAfterDrag` in src/utils/dragOrder.ts, tested by `check:mutations`). With blocks of different heights, the dragged block's leading edge decides where it lands (its top edge going up, its bottom edge going down). The link buttons hide while dragging. Removing or deleting a child keeps the groups valid (`withoutChild`).
+- Shown as "Twin of …" / "One of N born together, with …" on the info sheet and under the name in the PDF table (`bornTogetherWith`).
+
 ## Selection
 
-- Tapping a card highlights that person's lines. Tapping empty space clears the highlight, and every line goes back to its normal color (a background `Pressable` in TreeCanvas; the content box is `box-none` so empty spots reach it).
+- Tapping a card highlights that person's lines. Tapping empty space clears the highlight, and every line and card goes back to its normal color.
+- Every tap on the tree goes through one tap gesture (`handleCanvasTap` in TreeCanvas), not a touch target per card or ⊕: it hits a card first, else the nearest ⊕ within a fingertip on screen (`FINGER`, 26 px, at any zoom, never less than `MARKER_HIT_X`×`MARKER_HIT`), else empty space. Cards are plain Views, so a drag that starts on a card pans cleanly. The edit-mode ▲▼ arrows stay their own `Pressable`s, and the tap gesture ignores taps on them.
 
 - With someone selected, the tree and the minimap turn every card gray except the people connected to them (tree cards: `theme.panel2` fill, `theme.stroke` outline, no raise, contents at 55%; minimap: `theme.stroke`): exactly the ends of the lines that stay colored (spouses, children, parents, brothers and sisters; `connectedIds` in TreeCanvas). The selected card stays `theme.selected`.
 
 ## Marriage marker
 
-- The ⊕ is an oval, wider than it is tall: `MARKER_RADIUS_X` (1.6 × `MARKER_RADIUS`) across, `MARKER_RADIUS` up and down, with a much wider tap area than the oval (`MARKER_HIT_X`, 150: under a column's width, so it never reaches the next marker on its row; its height stays `MARKER_HIT`, under `UNION_LANE_STEP`). Its height stays `MARKER_RADIUS` so the spacing between marriage bars doesn't change. The PDF draws the same oval.
+- The ⊕ is an oval, wider than it is tall: `MARKER_RADIUS_X` (1.6 × `MARKER_RADIUS`) across, `MARKER_RADIUS` up and down, with a much wider tap area than the oval (`MARKER_HIT_X`, 150 × `MARKER_HIT`, grown to a fingertip on screen when zoomed out; the nearest ⊕ wins when areas overlap, see handleCanvasTap). Its height stays `MARKER_RADIUS` so the spacing between marriage bars doesn't change. The PDF draws the same oval.
 
 - An ended marriage's ⊕ shows a ✕ instead of the +, drawn in `lineEnded` (a true red, #C8303C light / #F0606E dark, kept clearly apart from the gold of a current marriage), with real dashed lines at full color (`LineSegment` `dashed`: 10px dashes, 7px gaps; never fade a line to mean "ended", which made the red nearly invisible). The PDF does the same.
 
@@ -99,15 +108,18 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Data model and dates
 
-- `Person.born` and `died` are always Gregorian ISO `YYYY-MM-DD`. Shamsi is only for picking and showing dates (src/types/index.ts, src/utils/jalali.ts, ShamsiDatePicker). Never store a date in any other format.
+- `Person.born` and `died` are always Gregorian ISO `YYYY-MM-DD`. The calendar is only for picking and showing dates (`calendarFor` in src/utils/calendar.ts, `DatePicker`). Never store a date in any other format.
 - Birth sorting compares the ISO strings as text. An unknown birth sorts last as `'9999-99-99'`, and ties keep the order people were added (`byBirth` in src/layout/siblings.ts).
-- `Marriage.marriedYear` and `endedYear` are plain Shamsi year numbers. They are not converted.
+- `Marriage.marriedYear` and `endedYear` are stored as Shamsi year numbers. Persian shows and takes them as is; every other language shows and takes Gregorian years, converted with ±621 (`marriageYearForDisplay`, `marriageYearForStorage`), the same rule both ways. Typed years go through `toAsciiDigits`, so Persian or Arabic digits work.
+- `Person.nickname` shows in brackets after the name everywhere a name is shown: "Robert (Bob)". Always build names with `shortName` (cards, lists) or `fullName` (titles, sheets, the PDF table) from src/model/people.ts; name search matches nicknames too.
+- Same-sex couples are supported: nothing ties a marriage to gender, and gender only sets the card color and words like husband/wife. Never add a gender rule to marriages.
 - `t('deceased')` is the edit form's checkbox question («فوت کرده؟»). Showing that someone has died (info sheet, PDF table) uses `t('deceasedStatus')` («درگذشته» / "deceased"), never the question.
 - Use `isDeceased(person)` (src/model/people.ts). Someone is deceased if `deceased` is true or `died` is set. Never check only one.
 - PersonEditSheet drops `died` and `gravePlace` when the person isn't marked deceased. It saves empty strings as `undefined` and an empty album as `photos: undefined`. A name is required.
 - `Person.unknown` is a placeholder spouse: `t('unknown')` label, dashed flat card, left out of the person-tree picker.
 - `gender` is optional. Card colors and relation words use it only when set (`cardColors` in cardLook.ts, `relationWord` in RelationshipChart).
 - A person has at most one set of parents (one marriage whose `childIds` holds them). "Add parents" shows only when `!hasParents()`.
+- `canBeChildOf` (src/model/mutations.ts) decides who may become a couple's child: not one of the spouses, not someone who already has parents, and never an ancestor of either spouse (that loop made whole branches vanish). `addExistingChild` refuses anything else, and the "existing child" and "existing parents" pickers only offer what it allows.
 - `Marriage.manualChildOrder`: when true, `childIds` order is the sibling order; when unset, children sort by birth (`orderedChildIds`). `setChildOrder` accepts only a full reordering of that marriage's own children; `resetChildOrder` clears the flag.
 - If a parent has children from several marriages and any of them has a manual order, each marriage's children stay together in their own order instead of mixing by birth (`bloodChildrenOf`).
 - `graveLocation` is reserved for a future map pin and is unused.
@@ -128,13 +140,13 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
   - `kinbridge:family-data:v1:<projectId>` is every other tree.
   - `kinbridge:projects:v1` is the project index (`activeId`, `projects[]`).
   - `kinbridge:themeMode`, `kinbridge:onboardingSeen:v1`, `kinbridge:showMinimap:v1`, `kinbridge:cardStyle:v1`, `kinbridge:showRibbon:v1` are settings.
-- Setting defaults: minimap and ribbon on unless `'0'` is stored; card style `'large'` unless `'compact'`; light theme. The language is not saved: the app always opens in Persian.
+- Setting defaults: minimap and ribbon on unless `'0'` is stored; card style `'large'` unless `'compact'`; light theme. The language the user picks is saved (`kinbridge:locale:v1`); until then the app opens in its store version's default (see Language).
 - A broken project index is rebuilt and the tree data is left alone. If `activeId` isn't in the list, the first project becomes active.
 - Every load of tree data (from storage or from an import) goes through `normalizeFamilyData` (src/storage/migrate.ts). It turns an old numeric year into `YYYY-01-01`, clears a `manualGeneration` larger than the number of people, and drops child ids that point to no one and marriages missing a spouse. It returns the same object for anyone it doesn't change. migrate.ts must stay free of React Native and Expo imports.
 - `sampleFamily` loads only on a fresh install with exactly one project. Every other new tree starts as one "New person" (`starterTree` in App.tsx).
 - `applyMutation` (App.tsx) saves to `activeProjectRef.current`, not React state, so a save never lands in the wrong tree while switching. `openProject` clears selection and edit state and bumps `resetToken`.
 - The last tree can never be deleted. Deleting a tree asks first (`confirmDestructive`).
-- Tree names: «شجره‌نامه من» / "My family tree", then numbered one past the highest existing number, in either language and digit set (`nextTreeName`). Duplicates get ` (2)`, ` (3)` (`uniqueName`).
+- Tree names: `treeBaseName` («شجره‌نامه من» / "My family tree" / ...), then numbered one past the highest existing number, in any language and digit set (`nextTreeName`, using `phraseInEveryLanguage`). Duplicates get ` (2)`, ` (3)` (`uniqueName`).
 - Export format: `{ kinbridgeExport: 2, exportedAt, trees: [{ name, people, marriages }], albumFiles }`. Import refuses anything else with `NOT_AN_EXPORT`, shown as `t('importNotExportFile')`. If the format changes, bump the version and keep reading version 2.
 - File names are the tree name without `\/:*?"<>|`, plus the ISO date (or `family-trees` for several trees), so a new export never overwrites an old one. The PDF uses the same pattern.
 - Import always adds each chosen tree as a new tree and never overwrites one.
@@ -143,7 +155,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 ## Mutations (src/model/mutations.ts)
 
 - Mutations are pure: they return new FamilyData and never import i18n. Placeholder names come in as `NewPersonName`.
-- A new person is "New person N" / «فرد جدید N», one past the highest N in either language or digit set (`PLACEHOLDER_NAME`). If you change `newPersonLabel` in en.ts or fa.ts, update that regex too.
+- A new person is `newPersonLabel` plus a number («فرد جدید ۳», "New person 3", ...), one past the highest number in any language or digit set: App passes every language's label as `NewPersonName.knownLabels` (`phraseInEveryLanguage('newPersonLabel')`).
 - `addChild` copies the father's surname (the spouse with `gender === 'male'`), never the mother's. No father means a blank surname.
 - `deletePerson` removes every marriage they were a spouse in and takes them out of any `childIds`. Their children stay. The caller confirms first.
 - A marriage can be deleted only when it has no children (`canDeleteMarriage`).
@@ -183,11 +195,14 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Language and RTL
 
-- The app opens in Persian (`initialLocale="fa"`). RTL follows the language (`RTL_LOCALES`). `I18nManager.forceRTL` is deliberately not used.
-- en.ts is the source of truth. fa.ts is typed `Record<keyof typeof en, string>`, so every new string goes in both files or typecheck fails. Placeholders use `{name}`.
+- The app speaks 16 languages (src/i18n/locales.ts `LOCALES`): Persian, English, Arabic, German, French, Italian, Spanish, Portuguese, Russian, Turkish, Simplified Chinese, Korean, Japanese, Hindi, Indonesian, Urdu.
+- Where it opens: Bazaar in Persian; Galaxy Store in the phone's language if the app speaks it (expo-localization), else English (`defaultLocale`). A language the user picks is saved and wins after that.
+- RTL follows the language (`RTL_LOCALES`: Persian, Arabic, Urdu). `I18nManager.forceRTL` is deliberately not used.
+- Digits follow the language (`localDigits`): Persian ۰-۹ in Persian, Arabic ٠-٩ in Arabic, 0-9 otherwise. `toAsciiDigits` reads any of them back.
+- en.ts is the source of truth. Every other language file is typed `Record<StringKey, string>` and registered in `catalogs` (src/i18n/index.ts), so every new phrase goes into all 16 files or typecheck fails. A phrase missing at runtime falls back to English. Placeholders use `{name}` and must match English exactly.
 - RTL is done by hand: `row-reverse` rows, `writingDirection: 'rtl'` and right-aligned text, the side menu slides from the right, the +/↻ corners swap, and the Shamsi calendar puts Saturday on the right.
-- Dates on screen use `formatJalali`: Persian digits, no leading zeros (`۱۳۶۴/۲/۲۷`), even in English. The PDF uses Shamsi dates in both languages, with Persian digits only in Persian. New-person and tree numbers use Persian digits in Persian.
-- The language buttons name each language in its own script ('فارسی', 'English'), never translated.
+- Shamsi dates are only for Persian. Every other language uses the Gregorian calendar, everywhere: screens, the date picker and the PDF. All of it goes through `calendarFor(locale)` (src/utils/calendar.ts): Persian is `۱۳۶۴/۲/۲۷` (Persian digits, no leading zeros); other languages use the phone's `Intl` date format with month and weekday names in that language, and English names if `Intl` can't give them. Never call `formatJalali` directly from a screen.
+- The language list (in the side menu, opening right there under its row, not as a second pop-up) names each language in its own script (`nativeName`), never translated. The Language row shows ▾ / ▴ (MenuRow `trailing`, its own Text), and the list sits in its own tinted box (`subList`, `theme.panel2`) so it stands apart from the menu.
 - Never put an emoji in the same `Text` as Persian. Android measures it too narrow and shows nothing. Draw the emoji in its own `Text` (SideMenu `MenuRow` icon, ThanksDialog).
 - All text is American English in English strings, code and comments.
 
@@ -201,23 +216,27 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 ## Canvas and gestures (TreeCanvas and friends)
 
 - Draw lines and the ⊕ circle as rotated plain Views (LineSegment.tsx, MarkerCircle), never react-native-svg. A big `<Svg>` crashed with "Canvas: trying to draw too large bitmap".
-- Canvas buttons are plain `Pressable`s, never SVG `onPress`, which throws under React 19 on web.
+- Canvas buttons (only the ▲▼ arrows now) are plain `Pressable`s, never SVG `onPress`, which throws under React 19 on web.
 - Pan and pinch run together and each applies a small change per frame: pan moves, pinch zooms around the focal point. Recomputing from a saved start made the camera slide sideways on every zoom.
 - The content transform bakes in translate, scale, translate back. Never rely on `transformOrigin` with a Reanimated transform. ZoomableView does the same.
-- Reset sets `.value` directly, never `withTiming`, which never landed on real phones.
+- Reset sets `.value` directly, never `withTiming` from the JS thread, which never landed on real phones. Letting go of a drag flings the tree with `withDecay`, started inside the pan gesture (UI thread), clamped to `axisBounds`; any new touch or pinch stops it (`stopGlide`).
+- Zoom range is `MIN_SCALE` 0.05 to `MAX_SCALE` 2.5.
+- A worklet ('worklet' function) must be defined below every worklet it calls in the same file (src/utils/camera.ts: `clamp`, then `axisBounds`, then `clampAxis`). Reanimated captures what a worklet calls when the file loads, and one defined later is still undefined then: the app failed to open with "undefined is not a function".
 - Fit-to-screen (first open and the ↻ button) fits by height only and leaves room for the minimap (`MINIMAP_RESERVE`); fitting by width made big trees unreadable. It centers on `focusPersonId` in the one-person view, and otherwise on the person at the very top of the tree, the one with the most descendants if several share that row (`topPersonId`).
 - `clampAxis` (src/utils/camera.ts) keeps the camera within `EDGE_SLACK` (0.4 of the screen) of the tree.
 - On web, the wheel zooms around the cursor and `userSelect: 'none'` stops drags from selecting text.
 - The gesture binds to a full-screen View, not the content box.
 - A card takes two taps: the first selects it, the second opens PersonSheet (view mode) or PersonEditSheet (edit mode). A ⊕ in edit mode also takes two taps; in view mode one tap opens MarriageSheet. While `pickPrompt` is set, the next card tap goes to it.
 - When a card is selected, lines not connected to that person dim to `theme.stroke`.
+- Marriages are drawn in `unionsInDrawOrder`: grayed ones first and the selected person's own after them, then deeper bars first. Someone with several marriages has one drop per marriage from the same point under their card, so the drops overlap; in any other order, a grayed line covered a highlighted one (one wife's line stopped where another's ran over it). The PDF draws deeper bars first too.
 - Edit mode shows ▲▼ arrows only on the selected card, in a `box-none` top layer. There are no row-order arrows.
 - `MARKER_HIT` must stay under `UNION_LANE_STEP`, so stacked markers never share a tap area.
-- PersonCard is its own component with `LinearTransition`, so moves animate.
+- PersonCard is its own component with `LinearTransition`, so moves (the ▲▼ arrows) animate. Its key includes `structureKey`, a fingerprint of who is married to whom and whose children are whose: when that changes, every card is drawn fresh in its new place instead of animating, because the transition left cards stuck in wrong places while the lines had already moved (lines not connected, cards missing until a restart).
 
 ## Sheets and modals
 
 - Every Modal uses `statusBarTranslucent` and `navigationBarTranslucent` and adds the safe-area insets itself, or bottom buttons end up under the system bars.
+- A sheet with a text box pads its backdrop's bottom by `useKeyboardHeight()` (src/utils/useKeyboardHeight.ts), so it sits above the on-screen keyboard: inside a Modal, Android doesn't resize the screen for the keyboard, and renaming a tree typed into a box hidden under it. Call the hook before any early `return null`.
 - The tap-outside-to-close `Pressable` is a sibling behind the sheet, never a parent around the ScrollView, which breaks scrolling.
 - Read `nativeEvent` values right away, never inside a state updater. React reuses the event, and this crash shipped.
 - Size sheets with a pixel cap from `useWindowDimensions`, not a `'88%'` string, or they never scroll.
@@ -263,10 +282,21 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `.gitignore` ignores `*.pem` but keeps `!/bazaar-release/cert.pem`, and that line must stay after `*.pem`. `/bazaar-release/*.bin`, `.ssh-key`, `/android`, `/ios` and `/local/` stay ignored.
 - The EAS workflow builds Android only.
 
+## Store versions
+
+- One codebase, two store versions, picked at build time by `EXPO_PUBLIC_APP_VARIANT` (app.config.js, src/config/variant.ts): `bazaar` (default) is «شجره نامه» and opens in Persian; `galaxy` is "Family Tree" and opens in the phone's language or English. Same package name, signing key and everything else.
+- eas.json: `preview` / `production` are Bazaar; `preview-galaxy` / `production-galaxy` are Galaxy Store.
+- A fresh Galaxy install opens on `sampleFamilyEnglish` (made-up English names, same shape as the Persian sample); Bazaar on `sampleFamily`. Both are checked by `check:families`.
+- To look at the Galaxy version in Expo Go: `EXPO_PUBLIC_APP_VARIANT=galaxy npx expo start --tunnel --go`.
+
 ## Builds
 
-- `.github/workflows/preview-apk.yml` builds the preview APK entirely on GitHub's runner, with no Expo or other outside build service: `npx expo prebuild`, then Gradle `assembleRelease`, after `npm run check:all`, and uploads it as the `kinbridge-preview-apk` artifact. It runs on every push to `main` and by hand (workflow_dispatch). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
-- Pipeline signing: with the secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`, the APK is re-signed with that key (`apksigner`); without them it keeps Gradle's debug signature. It sets `EXPO_PUBLIC_ADS_TEST=1`, like the preview profile.
+- `.github/workflows/release-builds.yml` runs on every push to `main` and by hand (workflow_dispatch). After `npm run check:all` it builds three files, entirely on GitHub's runner with no Expo or other outside build service (`npx expo prebuild`, then Gradle). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
+  - `kinbridge-phone`: the Bazaar version with test ads (`EXPO_PUBLIC_ADS_TEST=1`), arm64 only, for the owner's own phone.
+  - `kinbridge-bazaar`: the release app bundle (`.aab`) for the Cafe Bazaar console, signed with `jarsigner` using a keystore made on the spot from the key and `cert.pem`, after stripping Gradle's debug signature (so it carries only the Bazaar signature).
+  - `kinbridge-galaxy`: the Galaxy Store release APK, every chip type.
+- One signing identity for all three: the Bazaar key. The repository secret `BAZAAR_SIGNING_KEY` holds the private key (the PEM text of `.ssh-key`), and `bazaar-release/cert.pem` is its certificate; the pipeline checks they match and fails clearly if the secret is missing. So the phone APK installs as an update over the Bazaar install, and the Galaxy app has the same identity. Never sign with any other key.
+- The pipeline sets the version code to 100 plus the run number (`ANDROID_VERSION_CODE`, read by app.config.js), so every build is newer than the last upload. Other builds keep app.json's.
 - `expo prebuild` rewrites the `android`/`ios` scripts in package.json; don't commit that (the owner runs the app through Expo Go).
 - Cloud builds on EAS: `npx eas build --profile preview --platform android`. The preview profile must keep `EXPO_PUBLIC_ADS_TEST=1` (see Ads).
 
@@ -281,7 +311,8 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `check:layout`: the older packed layout, markers and lanes.
 - `check:mutations`: edits to the tree (surnames, adding, deleting, moving).
 - `check:migrate`: loading old or broken data.
-- `check:jalali`: Shamsi conversion and date display.
+- `check:jalali`: Shamsi conversion, Gregorian calendars for other languages, and marriage-year conversion.
+- `check:i18n`: every language file has every phrase, nothing empty, the same {placeholders} as English, and new-person numbering that carries on across languages.
 - `check:launchAd`: the four launch-ad paths.
 
 Test fixtures live in `scripts/fixtures/richFamily.ts` (made-up English names). Keep them separate from `src/data/sampleFamily.ts`.

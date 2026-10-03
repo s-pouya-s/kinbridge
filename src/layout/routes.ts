@@ -1,12 +1,19 @@
 import type { ID } from '../types';
 import type { Layout, LayoutUnion, Point } from './layout';
+import { groupsOf } from './siblings';
 
 /** The lines one marriage draws, as polylines in layout coordinates. */
 export interface UnionRoutes {
   /** One per spouse: straight down from the bottom of their card to the bar, then along the bar to the ⊕. Together they make the bar. */
   spouses: [Point[], Point[]];
-  /** One per child: one straight line from the ⊕ to the top of the child's card. */
+  /** One per child: one straight line from the ⊕ to the top of the child's card, or, for a child born together with siblings, from their split point. */
   children: { childId: ID; points: Point[] }[];
+  /**
+   * One per group of children born together (twins, triplets, ...) on one
+   * row: the thicker line from the ⊕ down to the point where it splits to
+   * each of them.
+   */
+  trunks: { childIds: ID[]; points: Point[] }[];
 }
 
 /**
@@ -27,11 +34,24 @@ export function makeUnionRouter(layout: Layout, cardHeight: number): (u: LayoutU
     if (!a || !b) return null;
     const marker = { x: u.markerX, y: u.markerY };
     const spouseLine = (p: Point): Point[] => [{ x: p.x, y: p.y + half }, { x: p.x, y: marker.y }, marker];
+    // Children born together on one row: one line down to a split point
+    // above the middle of them, 60% of the way down, then one to each.
+    // (Members on different rows, one moved down by hand, get plain lines.)
+    const splitOf = new Map<ID, Point>();
+    const trunks: UnionRoutes['trunks'] = [];
+    for (const group of groupsOf(u.marriage)) {
+      const cards = group.map((id) => layout.positions.get(id));
+      if (cards.some((c) => !c) || new Set(cards.map((c) => c!.y)).size > 1) continue;
+      const top = cards[0]!.y - half;
+      const split = { x: cards.reduce((sum, c) => sum + c!.x, 0) / cards.length, y: marker.y + (top - marker.y) * 0.6 };
+      trunks.push({ childIds: group, points: [marker, split] });
+      for (const id of group) splitOf.set(id, split);
+    }
     const children = u.marriage.childIds.flatMap((childId) => {
       const c = layout.positions.get(childId);
-      return c ? [{ childId, points: [marker, { x: c.x, y: c.y - half }] }] : [];
+      return c ? [{ childId, points: [splitOf.get(childId) ?? marker, { x: c.x, y: c.y - half }] }] : [];
     });
-    return { spouses: [spouseLine(a), spouseLine(b)], children };
+    return { spouses: [spouseLine(a), spouseLine(b)], children, trunks };
   };
 }
 

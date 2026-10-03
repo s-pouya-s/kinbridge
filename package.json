@@ -11,6 +11,7 @@
     "expo-file-system": "~57.0.6",
     "expo-image-manipulator": "~57.0.19",
     "expo-image-picker": "~57.0.19",
+    "expo-localization": "~57.0.2",
     "expo-print": "~57.0.2",
     "expo-sharing": "~57.0.21",
     "expo-splash-screen": "~57.0.9",
@@ -47,8 +48,9 @@
     "check:local": "tsx scripts/checkLocalFamily.ts",
     "check:families": "tsx scripts/checkFamilies.ts",
     "generate:families": "tsx scripts/generateFamilies.ts",
-    "check:all": "npm run -s typecheck && npm run -s check:parentChild && npm run -s check:families && npm run -s check:layout && npm run -s check:mutations && npm run -s check:migrate && npm run -s check:jalali && npm run -s check:launchAd && npm run -s check:local",
-    "prepare": "git config core.hooksPath .githooks"
+    "check:all": "npm run -s typecheck && npm run -s check:parentChild && npm run -s check:families && npm run -s check:layout && npm run -s check:mutations && npm run -s check:migrate && npm run -s check:jalali && npm run -s check:i18n && npm run -s check:launchAd && npm run -s check:local",
+    "prepare": "git config core.hooksPath .githooks",
+    "check:i18n": "tsx scripts/checkI18n.ts"
   },
   "private": true
 }

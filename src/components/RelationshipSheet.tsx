@@ -5,6 +5,7 @@ import type { ID, Person } from '../types';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { PersonPicker } from './PersonPicker';
+import { fullName } from '../model/people';
 
 export type RelationshipSlot = 'first' | 'second';
 
@@ -41,7 +42,7 @@ export function RelationshipSheet({ visible, people, firstId, secondId, onChoose
         <Text style={[styles.slotLabel, isRTL && styles.textRTL]}>{label}</Text>
         <View style={[styles.chosen, !person && styles.chosenEmpty]}>
           <Text style={[person ? styles.chosenName : styles.chosenPlaceholder, isRTL && styles.textRTL]} numberOfLines={1}>
-            {person ? (person.unknown ? t('unknown') : [person.name, person.surname].filter(Boolean).join(' ')) : t('noOneChosen')}
+            {person ? fullName(person, t('unknown')) : t('noOneChosen')}
           </Text>
         </View>
         <View style={[styles.row, isRTL && styles.rowRTL]}>

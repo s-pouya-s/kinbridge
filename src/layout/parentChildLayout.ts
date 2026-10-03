@@ -1,5 +1,5 @@
 import type { FamilyData, ID, Person } from '../types';
-import { byBirth, orderedChildIds } from './siblings';
+import { byBirth, groupsOf, keepBornTogether, orderedChildIds } from './siblings';
 import { COMPACT_METRICS, GENERATION_GROWTH_CAP, MARKER_RADIUS, buildUnions, cardSize, type CardMetrics, type Layout, type LayoutUnion, type Point } from './layout';
 import { segmentCrossesBox } from './routes';
 
@@ -187,6 +187,11 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     // trusted to line up with it, so each marriage's children stay together
     // in their own order instead, one marriage after another.
     if (!anyManual) kids = kids.sort(byBirthDate);
+    // Children born together always stay side by side.
+    kids = keepBornTogether(
+      kids,
+      data.marriages.filter((m) => m.spouseIds.includes(personId)).flatMap(groupsOf)
+    );
     bloodChildrenCache.set(personId, kids);
     return kids;
   };
@@ -359,7 +364,11 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     // row than their siblings. Their straight line from the ⊕ passes the
     // rows in between, so they go directly under this person, in columns
     // kept empty on those rows (see below).
-    const lowered = kids.filter((k) => (bloodDepth.get(k) ?? 0) > depth + 1);
+    // Deepest first, so they sit nearest this person: a line then only
+    // crosses rows above its own child, where no other lowered child's card
+    // is in its way (several lowered children on different rows, from two
+    // marriages, once had one child's line run through the others' cards).
+    const lowered = kids.filter((k) => (bloodDepth.get(k) ?? 0) > depth + 1).sort((a, b) => (bloodDepth.get(b) ?? 0) - (bloodDepth.get(a) ?? 0));
     const regular = kids.filter((k) => !lowered.includes(k));
     const members: Shape['members'] = [];
     let cardCell = 0;
@@ -369,8 +378,6 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
       cardCell = Math.floor((Math.min(...kidCells) + Math.max(...kidCells)) / 2);
       members.push(...kidsShape.members);
     }
-    const loweredDepth = Math.max(depth + 1, ...lowered.map((k) => bloodDepth.get(k) ?? 0));
-    const loweredRows = Array.from({ length: loweredDepth - depth - 1 }, (_, i) => depth + 1 + i);
     const spouses = outsiderSpousesOf(personId).filter((s) => !claimed.has(s));
 
     // Centered over the children, unless something is in the way of a
@@ -380,12 +387,11 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     // moving together so spouses stay side by side.
     // The lowered children, packed together like any siblings (each with
     // their spouse beside them), laid out once; where the group can go is
-    // part of choosing this person's column. `first` and `last` are the
-    // cells of the first and last lowered child within the group.
+    // part of choosing this person's column. `first` is the cell of the
+    // first lowered child within the group.
     const loweredGroup = lowered.length > 0 ? packShapes(lowered.map(branchShape)) : null;
     const loweredCells = loweredGroup ? loweredGroup.members.filter((m) => lowered.includes(m.id)).map((m) => m.cell) : [];
     const first = Math.min(...loweredCells);
-    const last = Math.max(...loweredCells);
     // Where the first lowered child goes, counted from this person's
     // column: right under them, unless that would put the group on a column
     // kept empty for this couple's own straight lines down (this person's,
@@ -409,11 +415,22 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     };
     // The straight lines from the ⊕ beside this person to the lowered
     // children cross the rows in between over these columns.
-    const corridor = (c: number) => (loweredGroup ? Array.from({ length: loweredStart(c) + last - first - c + 1 }, (_, i) => c + i) : []);
+    // Each lowered child's own clear path: the columns between this person
+    // and that child, on just the rows its line crosses (between this row
+    // and the child's).
+    const cellOf = new Map(loweredGroup ? loweredGroup.members.filter((m) => lowered.includes(m.id)).map((m) => [m.id, m.cell]) : []);
+    const corridor = (c: number): { col: number; row: number }[] =>
+      lowered.flatMap((k) => {
+        const kc = loweredStart(c) + cellOf.get(k)! - first;
+        const kDepth = bloodDepth.get(k) ?? 0;
+        const out: { col: number; row: number }[] = [];
+        for (let col = Math.min(c, kc); col <= Math.max(c, kc); col++) for (let row = depth + 1; row < kDepth; row++) out.push({ col, row });
+        return out;
+      });
     const fits = (c: number) =>
       isFree(members, c, dropRowsOf(personId, depth)) &&
       spouses.every((s, i) => isFree(members, c + 1 + i, dropRowsOf(s, depth))) &&
-      corridor(c).every((col) => isFree(members, col, loweredRows)) &&
+      corridor(c).every(({ col, row }) => isFree(members, col, [row])) &&
       loweredFit(c);
     for (let step = 0; ; step++) {
       if (fits(cardCell + step)) {
@@ -436,7 +453,7 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     if (loweredGroup) {
       const offset = loweredStart(cardCell) - first;
       members.push(...loweredGroup.members.map((m) => ({ ...m, cell: m.cell + offset })));
-      for (const col of corridor(cardCell)) for (const r of loweredRows) members.push({ id: RESERVED, cell: col, depth: r });
+      for (const { col, row } of corridor(cardCell)) members.push({ id: RESERVED, cell: col, depth: row });
     }
 
     const own = members.filter((m) => m.id === personId || spouses.includes(m.id));

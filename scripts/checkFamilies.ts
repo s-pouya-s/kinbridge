@@ -1,5 +1,5 @@
 import type { FamilyData } from '../src/types';
-import { sampleFamily } from '../src/data/sampleFamily';
+import { sampleFamily, sampleFamilyEnglish } from '../src/data/sampleFamily';
 import { richFamily } from './fixtures/richFamily';
 import { familyProblems, personTreeProblems } from './lib/familyRules';
 
@@ -30,6 +30,11 @@ const SITUATIONS = [
   'hand-set child order',
   'hand-set generation',
   'marriage with no children',
+  'nickname',
+  'twins',
+  'three or more born together',
+  'five born together',
+  'name in another script',
   'no gender',
   'outsider married into two lines',
   'person on their own',
@@ -46,6 +51,7 @@ const families: { name: string; situations: string[]; data: FamilyData }[] = fs
   .sort()
   .map((f) => JSON.parse(fs.readFileSync(`${DIR}/${f}`, 'utf8')));
 families.push({ name: 'built-in sample family', situations: [], data: sampleFamily });
+families.push({ name: 'English sample family (Galaxy Store)', situations: [], data: sampleFamilyEnglish });
 families.push({ name: 'rich fixture', situations: [], data: richFamily });
 
 let failed = 0;
@@ -63,9 +69,9 @@ for (const family of families) {
   if (problems.length > 5) console.error(`  ...and ${problems.length - 5} more`);
 }
 
-if (families.length < 402) {
+if (families.length < 403) {
   failed++;
-  console.error(`FAIL: expected 400 test families in ${DIR}/, found ${families.length - 2}`);
+  console.error(`FAIL: expected 400 test families in ${DIR}/, found ${families.length - 3}`);
 }
 const covered = new Map(SITUATIONS.map((s) => [s, families.filter((f) => f.situations.includes(s)).length]));
 for (const [situation, n] of covered) {

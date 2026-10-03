@@ -6,12 +6,18 @@ import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { PersonPicker } from './PersonPicker';
-import { orderedChildIds } from '../layout/siblings';
+import { groupsOf, orderedChildIds } from '../layout/siblings';
 import { DraggableChildList } from './DraggableChildList';
+import { canBeChildOf } from '../model/mutations';
+import { marriageYearForDisplay, marriageYearForStorage } from '../utils/calendar';
+import { toAsciiDigits } from '../i18n/locales';
+import { useKeyboardHeight } from '../utils/useKeyboardHeight';
 
 interface Props {
   marriage: Marriage | null;
   people: Person[];
+  /** Every marriage in the tree, to keep the child picker to people who can be this couple's child (see canBeChildOf). */
+  marriages: Marriage[];
   visible: boolean;
   canDelete: boolean;
   onClose: () => void;
@@ -25,15 +31,19 @@ interface Props {
   onReorderChildren: (ids: string[]) => void;
   /** Back to sorting the children by birth date. */
   onResetChildOrder: () => void;
+  /** Links or unlinks two neighboring children as born together (twins, triplets, ...). */
+  onToggleBornTogether: (aId: string, bId: string) => void;
 }
 
-export function MarriageEditSheet({ marriage, people, visible, canDelete, onClose, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild, onReorderChildren, onResetChildOrder }: Props) {
-  const { t, isRTL } = useI18n();
+export function MarriageEditSheet({ marriage, people, marriages: allMarriages, visible, canDelete, onClose, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild, onReorderChildren, onResetChildOrder, onToggleBornTogether }: Props) {
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
   // insets itself — otherwise its last row sits under the back/home bar.
   const insets = useSafeAreaInsets();
+  // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
+  const keyboardHeight = useKeyboardHeight();
   const [childPickerOpen, setChildPickerOpen] = useState(false);
   const [status, setStatus] = useState<MarriageStatus>('current');
   const [marriedYear, setMarriedYear] = useState('');
@@ -49,8 +59,9 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
   useEffect(() => {
     if (!marriage || !visible) return;
     setStatus(marriage.status);
-    setMarriedYear(marriage.marriedYear != null ? String(marriage.marriedYear) : '');
-    setEndedYear(marriage.endedYear != null ? String(marriage.endedYear) : '');
+    // Marriage years are stored Shamsi and shown in this language's calendar (see marriageYearForDisplay).
+    setMarriedYear(marriage.marriedYear != null ? String(marriageYearForDisplay(marriage.marriedYear, locale)) : '');
+    setEndedYear(marriage.endedYear != null ? String(marriageYearForDisplay(marriage.endedYear, locale)) : '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marriageId, visible]);
 
@@ -61,8 +72,9 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
   const handleSave = () => {
     onSave({
       status,
-      marriedYear: marriedYear.trim() ? Number(marriedYear.trim()) : undefined,
-      endedYear: status === 'ended' && endedYear.trim() ? Number(endedYear.trim()) : undefined,
+      // Typed in this language's calendar and digits («۱۳۷۰» reads as 1370).
+      marriedYear: marriedYear.trim() ? marriageYearForStorage(Number(toAsciiDigits(marriedYear.trim())), locale) : undefined,
+      endedYear: status === 'ended' && endedYear.trim() ? marriageYearForStorage(Number(toAsciiDigits(endedYear.trim())), locale) : undefined,
     });
     onClose();
   };
@@ -75,7 +87,7 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
       {/* A Modal's content lives outside the app's own gesture root on
           Android, so the draggable children list needs one of its own. */}
       <GestureHandlerRootView style={{ flex: 1 }}>
-      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
+      <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
@@ -105,6 +117,9 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
               {/* In the same order as on the tree, oldest first. */}
               <DraggableChildList
                 items={orderedChildIds(marriage, byId).map((id) => ({ id, label: byId.get(id)?.name ?? t('unknown') }))}
+                bornTogether={groupsOf(marriage)}
+                onToggleBornTogether={onToggleBornTogether}
+                bornTogetherLabel={t('bornTogetherLink')}
                 onReorder={onReorderChildren}
                 onRemove={onRemoveChild}
                 removeLabel={t('remove')}
@@ -112,6 +127,7 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
                 isRTL={isRTL}
                 theme={theme}
               />
+              {marriage.childIds.length >= 2 && <Text style={[styles.bornTogetherHint, isRTL && styles.textEnd]}>{t('bornTogetherHint')}</Text>}
               {marriage.manualChildOrder && (
                 <Pressable onPress={onResetChildOrder} style={styles.resetOrder}>
                   <Text style={[styles.resetOrderText, isRTL && styles.textEnd]}>{t('sortByBirthDate')}</Text>
@@ -145,7 +161,7 @@ export function MarriageEditSheet({ marriage, people, visible, canDelete, onClos
 
       <PersonPicker
         visible={childPickerOpen}
-        people={people.filter((p) => p.id !== marriage.spouseIds[0] && p.id !== marriage.spouseIds[1] && !marriage.childIds.includes(p.id))}
+        people={people.filter((p) => canBeChildOf({ people, marriages: allMarriages }, marriage.id, p.id))}
         onClose={() => setChildPickerOpen(false)}
         onSelect={(existingId) => {
           setChildPickerOpen(false);
@@ -223,6 +239,7 @@ function createStyles(theme: Theme) {
   segButton: { flex: 1, borderWidth: 1, borderColor: theme.stroke, borderRadius: 10, paddingVertical: 9, alignItems: 'center', backgroundColor: theme.panel2 },
   segButtonText: { color: theme.inkDim, fontSize: 13, fontWeight: '600' },
   emptyHint: { color: theme.inkFaint, fontSize: 12.5, marginBottom: 8 },
+  bornTogetherHint: { color: theme.inkFaint, fontSize: 12, marginTop: 8 },
   resetOrder: { alignSelf: 'flex-start', paddingVertical: 4, marginBottom: 8 },
   resetOrderText: { color: theme.lineMarriage, fontSize: 12.5, fontWeight: '600' },
   childRemove: { color: theme.lineEnded, fontSize: 12.5, fontWeight: '600' },

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { LinearTransition, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, { cancelAnimation, LinearTransition, useAnimatedStyle, useSharedValue, withDecay } from 'react-native-reanimated';
 import type { FamilyData, ID, Marriage, Person } from '../types';
 import { CARD_METRICS, cardSize, MARKER_RADIUS, MARKER_RADIUS_X, mirrorX, NODE_HEIGHT, NODE_WIDTH, UNION_LANE_STEP, type CardStyle } from '../layout/layout';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
@@ -10,7 +10,7 @@ import { makeUnionRouter, segmentsOf } from '../layout/routes';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { LineSegment } from './LineSegment';
-import { clamp, clampAxis } from '../utils/camera';
+import { axisBounds, clamp, clampAxis } from '../utils/camera';
 import { cardColors, raisedCardStyle } from './cardLook';
 import { MourningRibbon } from './MourningRibbon';
 import { isDeceased } from '../model/people';
@@ -20,7 +20,8 @@ import { Minimap, MINIMAP_RESERVE, type MinimapCard, type MinimapLine } from './
 // pinch-zoom-out — fit-by-height rarely needs it (a tree's generation count
 // is bounded), so this mostly just stops a pinch gesture from zooming out
 // to nothing.
-const MIN_SCALE = 0.12;
+/** How far out the tree can zoom: far enough to see a big family whole. */
+const MIN_SCALE = 0.05;
 const MAX_SCALE = 2.5;
 const CANVAS_PADDING = 90;
 const ARROW_HIT = 44;
@@ -118,9 +119,9 @@ const ARROW_GLYPH: Record<ArrowDir, string> = { up: '▲', down: '▼', left: '�
  * shapes with onPress route through react-native-svg's web Touchable
  * wrapper, which uses React's long-deprecated mixin-based Touchable APIs
  * (see the "TouchableMixin is deprecated" warning) and can throw outright
- * under React 19 on web. A plain Pressable is the same mechanism PersonCard
- * already uses without issue, so every tappable control on the canvas goes
- * through it instead of an SVG element's own onPress.
+ * under React 19 on web. The ▲▼ arrows are the canvas's only own buttons:
+ * every other tap (cards, ⊕ markers, empty space) goes through one tap
+ * gesture (see handleCanvasTap), which leaves taps on the arrows alone.
  */
 function DirectionArrow({ cx, cy, dir, dist, color, onPress }: { cx: number; cy: number; dir: ArrowDir; dist: number; color: string; onPress: () => void }) {
   const tipX = cx + (dir === 'left' ? -dist : dir === 'right' ? dist : 0);
@@ -203,6 +204,34 @@ export function TreeCanvas({
   // never crowds into its neighboring column; height and font have no such
   // ceiling since rowSpacing is growing right along with them.
   const { width: cardWidth, height: cardHeight, growth: cardGrowth } = cardSize(layout.maxGen, metrics);
+  // Someone with several marriages has one drop per marriage from the same
+  // point under their card, each down to its own bar, so the drops overlap.
+  // Drawn in this order, the one that matters stays visible on top: the
+  // selected person's own marriages after (above) the grayed ones, and
+  // otherwise deeper bars first, so each shorter drop shows its own color
+  // (a real, previously-shipped bug: one wife's highlighted line stopped
+  // where another marriage's grayed line ran over it).
+  const unionsInDrawOrder = useMemo(() => {
+    const lit = (u: (typeof layout.unions)[number]) =>
+      !selectedPersonId || u.marriage.spouseIds.includes(selectedPersonId) || u.marriage.childIds.includes(selectedPersonId) ? 1 : 0;
+    return [...layout.unions].sort((a, b) => lit(a) - lit(b) || b.markerY - a.markerY);
+  }, [layout.unions, selectedPersonId]);
+
+  // A fingerprint of who is married to whom and whose children are whose.
+  // A card moving because of an arrow press (the structure is the same)
+  // glides there (PersonCard's LinearTransition). When the structure itself
+  // changes (parents, children or spouses added or removed), much of the
+  // tree rearranges at once, and the transition could leave cards stuck in
+  // the wrong place while the lines had already moved (a real,
+  // previously-shipped bug: lines not connected and cards missing until the
+  // app restarted). So then every card is drawn fresh in its new place.
+  const structureKey = useMemo(() => {
+    const text = data.marriages.map((m) => `${m.spouseIds.join(',')}>${m.childIds.join(',')}`).join(';') + `|${data.people.length}`;
+    let hash = 5381;
+    for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+    return (hash >>> 0).toString(36);
+  }, [data.marriages, data.people.length]);
+
   const routeUnion = useMemo(() => makeUnionRouter(layout, cardHeight), [layout, cardHeight]);
   // Compact: a small round photo beside the name. Large: a big square photo
   // across the top of the card, leaving room below for the name.
@@ -437,15 +466,30 @@ export function TreeCanvas({
   // pinch owns only zooming around the current focal point.
   const boundsWidth = viewport.width || window.width;
   const boundsHeight = viewport.height || window.height;
+  // Letting go while moving flings the tree: it glides to a stop (withDecay
+  // runs on the UI thread here, unlike the JS-side withTiming that never
+  // landed on real phones) within the same edges clampAxis keeps. Any new
+  // touch stops a glide.
+  const stopGlide = () => {
+    'worklet';
+    cancelAnimation(translateX);
+    cancelAnimation(translateY);
+  };
   const pan = Gesture.Pan()
     .averageTouches(true)
+    .onBegin(stopGlide)
     .onChange((e) => {
       translateX.value = clampAxis(translateX.value + e.changeX, contentWidth, boundsWidth, scale.value);
       translateY.value = clampAxis(translateY.value + e.changeY, contentHeight, boundsHeight, scale.value);
+    })
+    .onEnd((e) => {
+      translateX.value = withDecay({ velocity: e.velocityX, clamp: axisBounds(contentWidth, boundsWidth, scale.value) });
+      translateY.value = withDecay({ velocity: e.velocityY, clamp: axisBounds(contentHeight, boundsHeight, scale.value) });
     });
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
+      stopGlide();
       lastPinchScale.value = 1;
     })
     .onUpdate((e) => {
@@ -458,7 +502,20 @@ export function TreeCanvas({
       scale.value = next;
     });
 
-  const composedGesture = Gesture.Simultaneous(pan, pinch);
+  // Every tap on the tree, worked out from where it landed (see
+  // handleCanvasTap), instead of a touch target on each card and ⊕: a ⊕ is
+  // hit within a fingertip on screen at any zoom, and cards don't catch the
+  // start of a drag. Fails on its own once the finger moves, so a drag pans.
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .maxDistance(14)
+    .onEnd((e, success) => {
+      if (!success) return;
+      const s = scale.value;
+      handleCanvasTap((e.x - translateX.value) / s, (e.y - translateY.value) / s, s);
+    });
+
+  const composedGesture = Gesture.Simultaneous(pan, pinch, tap);
 
   // Every translateX/translateY this file computes (fitToViewport, the
   // pinch/wheel focal-point math, the initial seed) assumes a plain
@@ -522,7 +579,7 @@ export function TreeCanvas({
       layout.unions.flatMap((u) => {
         const routes = routeUnion(u);
         if (!routes) return [];
-        return [...routes.spouses, ...routes.children.map((c) => c.points)].flatMap((points) => segmentsOf(points.map(toCanvas)));
+        return [...routes.spouses, ...routes.trunks.map((tr) => tr.points), ...routes.children.map((c) => c.points)].flatMap((points) => segmentsOf(points.map(toCanvas)));
       }),
     [layout, toCanvas, routeUnion]
   );
@@ -572,6 +629,52 @@ export function TreeCanvas({
     onMarriagePress(marriage);
   };
 
+  // What a tap at this point (canvas coordinates; `s` is the zoom) hit:
+  // a card, else the nearest ⊕ within a fingertip on screen, else empty
+  // space, which clears the selection so every line and card goes back to
+  // its own colors. Taps on the edit-mode ▲▼ arrows are left to their own
+  // buttons.
+  const FINGER = 26;
+  function handleCanvasTap(x: number, y: number, s: number) {
+    if (editMode && selectedPersonId) {
+      const pos = layout.positions.get(selectedPersonId);
+      if (pos) {
+        const c = toCanvas(pos);
+        const dist = cardHeight / 2 + 22;
+        if (Math.abs(x - c.x) <= ARROW_HIT / 2 && (Math.abs(y - (c.y - dist)) <= ARROW_HIT / 2 || Math.abs(y - (c.y + dist)) <= ARROW_HIT / 2)) return;
+      }
+    }
+    const slack = 4 / s;
+    let card: Person | undefined;
+    let cardDist = Infinity;
+    for (const person of data.people) {
+      const pos = layout.positions.get(person.id);
+      if (!pos) continue;
+      const c = toCanvas(pos);
+      const dx = Math.abs(x - c.x);
+      const dy = Math.abs(y - c.y);
+      if (dx <= cardWidth / 2 + slack && dy <= cardHeight / 2 + slack && dx + dy < cardDist) {
+        card = person;
+        cardDist = dx + dy;
+      }
+    }
+    if (card) return handlePersonPress(card);
+    const rx = Math.max(MARKER_HIT_X / 2, FINGER / s);
+    const ry = Math.max(MARKER_HIT / 2, FINGER / s);
+    let marriage: Marriage | undefined;
+    let best = Infinity;
+    for (const u of layout.unions) {
+      const m = toCanvas({ x: u.markerX, y: u.markerY });
+      const d = ((x - m.x) / rx) ** 2 + ((y - m.y) / ry) ** 2;
+      if (d <= 1 && d < best) {
+        marriage = u.marriage;
+        best = d;
+      }
+    }
+    if (marriage) return handleUnionPress(marriage);
+    clearSelection();
+  }
+
   return (
     <View
       ref={containerRef}
@@ -586,15 +689,9 @@ export function TreeCanvas({
             free to be any size/position; this is what the gesture actually
             binds to. */}
         <View style={styles.gestureArea}>
-        {/* A tap on empty space clears the selection, so every line goes
-            back to its normal color. It sits behind the tree, and the tree's
-            own box lets touches through (box-none), so taps on cards and
-            markers still reach them first; a drag still pans, because the
-            pan gesture cancels the press. */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={clearSelection} accessible={false} />
         <Animated.View style={[styles.content, contentStyle]} pointerEvents="box-none">
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            {layout.unions.map((u) => {
+            {unionsInDrawOrder.map((u) => {
               const spouseA = peopleById.get(u.marriage.spouseIds[0]);
               const spouseB = peopleById.get(u.marriage.spouseIds[1]);
               const routes = routeUnion(u);
@@ -619,6 +716,13 @@ export function TreeCanvas({
                       <LineSegment key={`s${i}-${j}`} x1={sg.x1} y1={sg.y1} x2={sg.x2} y2={sg.y2} color={color} strokeWidth={3} dashed={dashed} />
                     ))
                   )}
+                  {/* Children born together: their shared, thicker line down to where it splits. */}
+                  {routes.trunks.flatMap(({ childIds, points }, i) => {
+                    const trunkConnected = isConnected || (!!selectedPersonId && childIds.includes(selectedPersonId));
+                    return segmentsOf(points.map(toCanvas)).map((sg, j) => (
+                      <LineSegment key={`t${i}-${j}`} x1={sg.x1} y1={sg.y1} x2={sg.x2} y2={sg.y2} color={trunkConnected ? theme.lineBlood : theme.stroke} strokeWidth={4.5} />
+                    ));
+                  })}
                   {routes.children.flatMap(({ childId, points }) => {
                     const childConnected = isConnected || childId === selectedPersonId;
                     return segmentsOf(points.map(toCanvas)).map((sg, j) => (
@@ -651,25 +755,6 @@ export function TreeCanvas({
             })}
           </View>
 
-          {/* Tap targets for the ⊕ markers above, as plain Pressables rather
-              than onPress on the SVG Circle itself — see DirectionArrow's
-              comment for why. */}
-          {layout.unions.map((u) => {
-            const marker = toCanvas({ x: u.markerX, y: u.markerY });
-            return (
-              <Pressable
-                key={u.marriage.id}
-                onPress={() => handleUnionPress(u.marriage)}
-                style={{
-                  position: 'absolute',
-                  left: marker.x - MARKER_HIT_X / 2,
-                  top: marker.y - MARKER_HIT / 2,
-                  width: MARKER_HIT_X,
-                  height: MARKER_HIT,
-                }}
-              />
-            );
-          })}
 
           {data.people.map((person) => {
             const pos = layout.positions.get(person.id);
@@ -678,7 +763,7 @@ export function TreeCanvas({
             const isSelected = selectedPersonId === person.id;
             return (
               <PersonCard
-                key={person.id}
+                key={`${person.id}:${structureKey}`}
                 person={person}
                 x={c.x}
                 y={c.y}
@@ -691,7 +776,6 @@ export function TreeCanvas({
                 isSelected={isSelected}
                 dimmed={!!connectedIds && !connectedIds.has(person.id)}
                 colors={cardColors(person, theme)}
-                onPress={handlePersonPress}
                 theme={theme}
                 styles={styles}
               />
@@ -811,7 +895,6 @@ function PersonCard({
   isSelected,
   dimmed,
   colors,
-  onPress,
   theme,
   styles,
 }: {
@@ -830,7 +913,6 @@ function PersonCard({
   /** Someone else is selected and this person isn't connected to them: drawn gray, like the lines (see connectedIds). */
   dimmed: boolean;
   colors: { fill: string; stroke: string };
-  onPress: (person: Person) => void;
   theme: Theme;
   styles: Styles;
 }) {
@@ -856,10 +938,7 @@ function PersonCard({
     >
       <View style={[StyleSheet.absoluteFill, dimmed && { opacity: 0.55 }]}>
       {cardStyle === 'large' ? (
-        <Pressable
-          style={({ pressed }) => [styles.cardTouchableLarge, !text.showPhoto && styles.cardTouchableLargeNoPhoto, pressed && styles.cardTouchablePressed]}
-          onPress={() => onPress(person)}
-        >
+        <View style={[styles.cardTouchableLarge, !text.showPhoto && styles.cardTouchableLargeNoPhoto]}>
           {/* A photo on top when there is one; without one, no placeholder, and the names fill the card. */}
           {text.showPhoto && <Image source={{ uri: person.photoUri }} style={[styles.cardPhotoLarge, { width: text.photoSize, height: text.photoSize }]} />}
           <Text
@@ -875,16 +954,16 @@ function PersonCard({
               {text.surname.text}
             </Text>
           )}
-        </Pressable>
+        </View>
       ) : (
-        <Pressable style={({ pressed }) => [styles.cardTouchable, pressed && styles.cardTouchablePressed]} onPress={() => onPress(person)}>
+        <View style={styles.cardTouchable}>
           {text.showPhoto && (
             <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: text.photoSize, height: text.photoSize, borderRadius: text.photoSize / 2 }]} />
           )}
           <Text numberOfLines={1} adjustsFontSizeToFit ellipsizeMode="tail" style={[styles.cardName, { fontSize: text.name.fontSize }, person.unknown && { color: theme.inkFaint }]}>
             {text.name.text}
           </Text>
-        </Pressable>
+        </View>
       )}
       {showRibbon && isDeceased(person) && <MourningRibbon radius={15} side="left" thickness={cardStyle === 'large' ? 16 : 11} />}
       </View>
@@ -923,7 +1002,6 @@ function createStyles(theme: Theme) {
     gap: 6,
     paddingHorizontal: CARD_PADDING,
   },
-  cardTouchablePressed: { opacity: 0.6 },
   cardTouchableLarge: {
     width: '100%',
     height: '100%',

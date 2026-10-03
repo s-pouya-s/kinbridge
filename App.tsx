@@ -5,7 +5,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { FamilyData, ID, Marriage, Person } from './src/types';
-import { sampleFamily } from './src/data/sampleFamily';
+import { sampleFamily, sampleFamilyEnglish } from './src/data/sampleFamily';
+import { APP_VARIANT } from './src/config/variant';
 import {
   deleteFamilyData,
   exportTrees,
@@ -35,6 +36,7 @@ import {
   movePersonGeneration,
   type NewPersonName,
   setChildOrder,
+  toggleBornTogether,
   removeChildFromMarriage,
   resetChildOrder,
   updateMarriage,
@@ -57,10 +59,12 @@ import { ThanksDialog } from './src/components/ThanksDialog';
 import { exportTreePdf } from './src/export/pdf';
 import { findRelationshipRoutes, type PathStep } from './src/model/relationship';
 import { ThemeProvider, themes, useTheme, type Theme } from './src/theme';
-import { I18nProvider, useI18n } from './src/i18n';
+import { I18nProvider, phraseInEveryLanguage, useI18n } from './src/i18n';
+import { ANY_DIGITS, localDigits, toAsciiDigits } from './src/i18n/locales';
 import { useLaunchInterstitialAd } from './src/ads/launchInterstitial';
 import { pruneAlbumFiles } from './src/utils/album';
 import type { CardStyle } from './src/layout/layout';
+import { shortName } from './src/model/people';
 
 /** Same "kinbridge:" namespacing as storage.ts's and theme.ts's own AsyncStorage keys. */
 const ONBOARDING_SEEN_KEY = 'kinbridge:onboardingSeen:v1';
@@ -82,7 +86,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <I18nProvider initialLocale="fa">
+          <I18nProvider>
             <Root />
           </I18nProvider>
         </ThemeProvider>
@@ -144,20 +148,24 @@ function Root() {
   const [onboardingVisible, setOnboardingVisible] = useState(false);
 
   // What someone just added is called until they're given a real name.
-  const newPersonName: NewPersonName =
-    locale === 'fa' ? { label: t('newPersonLabel'), formatNumber: (n) => String(n).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]) } : { label: t('newPersonLabel') };
+  const newPersonName: NewPersonName = {
+    label: t('newPersonLabel'),
+    formatNumber: (n) => localDigits(n, locale),
+    knownLabels: phraseInEveryLanguage('newPersonLabel'),
+  };
   // The first tree is «شجره‌نامه من» ("My family tree"); each new one adds
   // the next number, «شجره‌نامه من ۲», «شجره‌نامه من ۳», ... one past the
-  // highest any tree already has (the unnumbered one counts as 1), in either
-  // language, so a number is never handed out twice.
-  const localDigits = (n: number) => (locale === 'fa' ? String(n).replace(/[0-9]/g, (d) => '۰۱۲۳۴۵۶۷۸۹'[Number(d)]) : String(n));
+  // highest any tree already has (the unnumbered one counts as 1), in any
+  // language and digits, so a number is never handed out twice.
   const nextTreeName = (projects: Project[]) => {
+    const bases = [...phraseInEveryLanguage('treeBaseName'), 'شجره نامه من'].map((b) => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pattern = new RegExp(`^(?:${bases.join('|')})(?: (${ANY_DIGITS}+))?$`);
     let max = 0;
     for (const p of projects) {
-      const match = /^(?:My family tree|شجره[‌ ]?نامه من)(?: ([0-9۰-۹]+))?$/.exec(p.name);
-      if (match) max = Math.max(max, match[1] ? Number(match[1].replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))) : 1);
+      const match = pattern.exec(p.name);
+      if (match) max = Math.max(max, match[1] ? Number(toAsciiDigits(match[1])) : 1);
     }
-    return max === 0 ? t('treeBaseName') : `${t('treeBaseName')} ${localDigits(max + 1)}`;
+    return max === 0 ? t('treeBaseName') : `${t('treeBaseName')} ${localDigits(max + 1, locale)}`;
   };
 
   // A brand new tree: one person to start from, named like anyone just added.
@@ -178,7 +186,8 @@ function Root() {
       setProjectIndex(index);
       const saved = await loadFamilyData(index.activeId);
       // Only the very first tree on a fresh install starts from the sample family.
-      setData(saved ?? (index.projects.length === 1 ? sampleFamily : starterTree()));
+      // A fresh install opens on the sample family: Persian for Bazaar, English for Galaxy Store.
+      setData(saved ?? (index.projects.length === 1 ? (APP_VARIANT === 'galaxy' ? sampleFamilyEnglish : sampleFamily) : starterTree()));
       try {
         // Photos from every tree share one folder, so all of them count.
         const all = await Promise.all(index.projects.map((p) => loadFamilyData(p.id)));
@@ -270,8 +279,8 @@ function Root() {
     const taken = new Set(projects.map((p) => p.name));
     if (!taken.has(base)) return base;
     let n = 2;
-    while (taken.has(`${base} (${localDigits(n)})`)) n++;
-    return `${base} (${localDigits(n)})`;
+    while (taken.has(`${base} (${localDigits(n, locale)})`)) n++;
+    return `${base} (${localDigits(n, locale)})`;
   };
 
   /** Saves each tree as a new project and opens the first of them. */
@@ -405,7 +414,7 @@ function Root() {
   };
 
   const handleDeletePerson = (person: Person) => {
-    const displayName = person.unknown ? t('unknown') : person.name;
+    const displayName = shortName(person, t('unknown'));
     confirmDestructive(
       t('deletePersonConfirmTitle', { name: displayName }),
       t('deletePersonConfirmMessage'),
@@ -591,6 +600,7 @@ function Root() {
       <MarriageEditSheet
         marriage={editingMarriage}
         people={data.people}
+        marriages={data.marriages}
         visible={editingMarriage != null}
         canDelete={editingMarriage != null && canDeleteMarriage(data, editingMarriage.id)}
         onClose={() => setEditingMarriageId(null)}
@@ -601,6 +611,10 @@ function Root() {
         onRemoveChild={(childId) => editingMarriage && handleRemoveChild(editingMarriage.id, childId)}
         onReorderChildren={(ids) => editingMarriage && applyMutation((d) => ({ data: setChildOrder(d, editingMarriage.id, ids), result: undefined }))}
         onResetChildOrder={() => editingMarriage && applyMutation((d) => ({ data: resetChildOrder(d, editingMarriage.id), result: undefined }))}
+        onToggleBornTogether={(a, b) =>
+          editingMarriage &&
+          applyMutation((d) => ({ data: toggleBornTogether(d, editingMarriage.id, a, b, new Map(d.people.map((p) => [p.id, p]))), result: undefined }))
+        }
       />
 
       <OnboardingSheet visible={onboardingVisible} onClose={dismissOnboarding} />
@@ -705,7 +719,7 @@ function Root() {
         onClose={() => setMenuVisible(false)}
         editMode={editMode}
         onToggleEditMode={() => setEditMode((v) => !v)}
-        onToggleLocale={() => setLocale(locale === 'fa' ? 'en' : 'fa')}
+        onSetLocale={setLocale}
         onToggleTheme={toggleMode}
         showMinimap={showMinimap}
         onToggleMinimap={toggleMinimap}

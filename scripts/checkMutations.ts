@@ -1,5 +1,8 @@
 import { richFamily } from './fixtures/richFamily';
 import {
+  canBeChildOf,
+  removeChildFromMarriage,
+  toggleBornTogether,
   addChild,
   addExistingChild,
   addExistingSpouse,
@@ -14,6 +17,8 @@ import {
 import { computeGenerations } from '../src/layout/generations';
 import { computeLayout, COL_SPACING } from '../src/layout/layout';
 import type { FamilyData } from '../src/types';
+import { groupsOf, orderedChildIds } from '../src/layout/siblings';
+import { orderAfterDrag, topsOf } from '../src/utils/dragOrder';
 
 function assert(cond: boolean, msg: string) {
   if (!cond) {
@@ -51,15 +56,17 @@ function assert(cond: boolean, msg: string) {
 // --- addExistingChild: link an existing person as a child of a marriage, instead of always creating someone new ---
 {
   const before = richFamily.people.length;
-  // Omid already exists (married to Layla) — link him as an (additional, genealogically
-  // odd but structurally valid) child of Yusuf & Sana's marriage, which starts with just Tara.
-  const data = addExistingChild(richFamily, 'm-yusuf-sana', 'omid');
+  // Kian already exists (Dara's first husband, no parents of his own, and
+  // not an ancestor of Yusuf or Sana) — link him as a child of Yusuf &
+  // Sana's marriage, which starts with just Tara. (Someone who already has
+  // parents, like Omid, is refused: see canBeChildOf below.)
+  const data = addExistingChild(richFamily, 'm-yusuf-sana', 'kian');
   assert(data.people.length === before, 'no new person is created — the child already existed');
   const marriage = data.marriages.find((m) => m.id === 'm-yusuf-sana')!;
-  assert(marriage.childIds.includes('omid') && marriage.childIds.includes('tara'), "Omid is added alongside Tara, who's still there");
+  assert(marriage.childIds.includes('kian') && marriage.childIds.includes('tara'), "Kian is added alongside Tara, who's still there");
 
   // Linking someone already a child of that marriage a second time is a no-op.
-  const again = addExistingChild(data, 'm-yusuf-sana', 'omid');
+  const again = addExistingChild(data, 'm-yusuf-sana', 'kian');
   assert(again === data, 'linking an existing child a second time changes nothing (same reference)');
 }
 
@@ -176,6 +183,82 @@ function rowOf(data: FamilyData, personId: string): string[] {
   const layout = computeLayout(reset);
   const baseLayout = computeLayout(richFamily);
   assert(layout.positions.get('layla')!.x === baseLayout.positions.get('layla')!.x, 'and the layout goes right back to the fully-automatic positions');
+}
+
+// Adding an existing person as a child never makes anyone their own
+// ancestor (a loop the layout can't draw: whole branches vanished) and
+// never gives someone a second set of parents.
+{
+  const loop: FamilyData = {
+    people: ['gp', 'gm', 'kid', 'kidWife', 'grandkid', 'gkWife'].map((id) => ({ id, name: id })),
+    marriages: [
+      { id: 'm-old', spouseIds: ['gp', 'gm'], status: 'current', childIds: ['kid'] },
+      { id: 'm-kid', spouseIds: ['kid', 'kidWife'], status: 'current', childIds: ['grandkid'] },
+      { id: 'm-gk', spouseIds: ['grandkid', 'gkWife'], status: 'current', childIds: [] },
+    ],
+  };
+  assert(!canBeChildOf(loop, 'm-gk', 'gp'), 'a grandfather can\'t become his own grandson\'s child');
+  assert(addExistingChild(loop, 'm-gk', 'gp') === loop, 'and addExistingChild refuses it, changing nothing');
+  assert(!canBeChildOf(loop, 'm-gk', 'kid'), 'nobody gets a second set of parents');
+  assert(canBeChildOf(loop, 'm-gk', 'gkWife') === false, "a spouse can't be their own marriage's child");
+  assert(canBeChildOf(loop, 'm-old', 'kidWife'), 'someone unrelated with no parents can still be added as a child');
+}
+
+// Children born together: link neighbors into a group of any size, unlink
+// to split it, and the groups stay valid as children come and go.
+{
+  const kids = ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'];
+  let d: FamilyData = {
+    people: ['mom', 'dad', ...kids].map((id, i) => ({ id, name: id, born: i < 2 ? undefined : `1990-01-0${i}` })),
+    marriages: [{ id: 'm', spouseIds: ['mom', 'dad'], status: 'current', childIds: kids }],
+  };
+  const byId = () => new Map(d.people.map((p) => [p.id, p]));
+  const groups = () => groupsOf(d.marriages[0]).map((g) => g.join(',')).sort();
+  d = toggleBornTogether(d, 'm', 'k1', 'k2', byId());
+  assert(groups().join('|') === 'k1,k2', 'linking two neighbors makes twins');
+  for (const [a, b] of [['k2', 'k3'], ['k3', 'k4'], ['k4', 'k5']]) d = toggleBornTogether(d, 'm', a, b, byId());
+  assert(groups().join('|') === 'k1,k2,k3,k4,k5', `linking on down the list grows the group to five (got ${groups().join('|')})`);
+  d = toggleBornTogether(d, 'm', 'k2', 'k3', byId());
+  assert(groups().join('|') === 'k1,k2|k3,k4,k5', `unlinking in the middle splits it into twins and triplets (got ${groups().join('|')})`);
+  d = toggleBornTogether(d, 'm', 'k1', 'k2', byId());
+  assert(groups().join('|') === 'k3,k4,k5', 'unlinking twins leaves no group of one');
+  d = removeChildFromMarriage(d, 'm', 'k4');
+  assert(groups().join('|') === 'k3,k5', 'removing a triplet leaves the other two as twins');
+  d = deletePerson(d, 'k5');
+  assert(groups().length === 0 && !('multipleBirths' in d.marriages[0]), 'deleting one of twins leaves no group');
+}
+{
+  // Born together but with different dates on record: still side by side.
+  const d: FamilyData = {
+    people: [
+      { id: 'a', name: 'a', born: '1990-01-01' },
+      { id: 'b', name: 'b', born: '1992-01-01' },
+      { id: 'c', name: 'c', born: '1994-01-01' },
+      { id: 'mom', name: 'mom' },
+      { id: 'dad', name: 'dad' },
+    ],
+    marriages: [{ id: 'm', spouseIds: ['mom', 'dad'], status: 'current', childIds: ['c', 'b', 'a'], multipleBirths: [['a', 'c']] }],
+  };
+  const order = orderedChildIds(d.marriages[0], new Map(d.people.map((p) => [p.id, p])));
+  assert(order.join() === 'a,c,b', `children born together sit side by side in sibling order (got ${order.join()})`);
+}
+
+// Dragging in the children list moves whole blocks: a single child, or a
+// whole group born together (here 'tw', two rows tall). Nothing can land
+// inside a group.
+{
+  const STEP = 56;
+  const heights = { a: STEP, tw: 2 * STEP, b: STEP };
+  const order = ['a', 'tw', 'b'];
+  assert(JSON.stringify(topsOf(order, heights)) === JSON.stringify({ a: 0, tw: STEP, b: 3 * STEP }), 'blocks sit one after another, the group two rows tall');
+  // Drag b up to between the twins' rows (its middle at the twins' middle):
+  // it lands before or after the whole group, never inside it.
+  const between = orderAfterDrag(order, heights, 'b', 2 * STEP - STEP / 2);
+  assert(between.join() === 'a,tw,b' || between.join() === 'a,b,tw', `a child dragged onto twins lands beside the group, not inside it (got ${between.join()})`);
+  assert(orderAfterDrag(order, heights, 'b', 0).join() === 'b,a,tw', 'a child dragged to the top lands first');
+  assert(orderAfterDrag(order, heights, 'tw', 2 * STEP).join() === 'a,b,tw', 'the twins dragged down move as one, past the next child');
+  assert(orderAfterDrag(order, heights, 'tw', 0).join() === 'tw,a,b', 'and dragged up, past the child above');
+  assert(orderAfterDrag(order, heights, 'a', 0).join() === 'a,tw,b', 'a small drag leaves the order alone');
 }
 
 process.exit(process.exitCode ?? 0);

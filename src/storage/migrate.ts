@@ -1,4 +1,5 @@
-import type { FamilyData } from '../types';
+import type { FamilyData, Marriage } from '../types';
+import { groupsOf } from '../layout/siblings';
 
 /**
  * born/died used to be a plain year (number) before dates got a real Shamsi
@@ -43,9 +44,24 @@ function dropDanglingLinks(data: FamilyData): FamilyData {
   const ids = new Set(data.people.map((p) => p.id));
   const marriages = data.marriages
     .filter((m) => m.spouseIds.every((id) => ids.has(id)))
-    .map((m) => (m.childIds.every((id) => ids.has(id)) ? m : { ...m, childIds: m.childIds.filter((id) => ids.has(id)) }));
+    .map((m) => (m.childIds.every((id) => ids.has(id)) ? m : { ...m, childIds: m.childIds.filter((id) => ids.has(id)) }))
+    .map(cleanBornTogether);
   const unchanged = marriages.length === data.marriages.length && marriages.every((m, i) => m === data.marriages[i]);
   return unchanged ? data : { ...data, marriages };
+}
+
+/**
+ * Groups of children born together (Marriage.multipleBirths) kept to what
+ * groupsOf allows: only the marriage's own children, each in one group, two
+ * or more per group. The same marriage when nothing needed cleaning.
+ */
+function cleanBornTogether(m: Marriage): Marriage {
+  if (!m.multipleBirths) return m;
+  const groups = groupsOf(m);
+  if (groups.length === m.multipleBirths.length && groups.every((g, i) => g.length === m.multipleBirths![i].length)) return m;
+  const next: Marriage = { ...m, multipleBirths: groups };
+  if (groups.length === 0) delete next.multipleBirths;
+  return next;
 }
 
 export function normalizeFamilyData(data: FamilyData): FamilyData {

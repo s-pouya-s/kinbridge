@@ -3,10 +3,12 @@ import type { TFunction } from '../i18n';
 import type { Theme } from '../theme';
 import { cardSize, LARGE_METRICS, MARKER_RADIUS, MARKER_RADIUS_X, mirrorX } from '../layout/layout';
 import { makeUnionRouter } from '../layout/routes';
+import { bornTogetherWith } from '../layout/siblings';
 import { cardText, fitLine, textWidth } from '../components/cardText';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
-import { isDeceased } from '../model/people';
-import { isoToJalali, toPersianDigits } from '../utils/jalali';
+import { fullName, isDeceased } from '../model/people';
+import { calendarFor } from '../utils/calendar';
+import type { Locale } from '../i18n/locales';
 
 /** Room around the tree inside the drawing, as on the canvas (see TreeCanvas's CANVAS_PADDING). */
 const PAD = 80;
@@ -16,7 +18,8 @@ const MARKER_RX = MARKER_RADIUS_X;
 /** The PDF draws the large card style: the same layout, card size and text as the app's large cards. */
 const METRICS = LARGE_METRICS;
 
-const FONT_STACK = "'Vazirmatn', 'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, sans-serif";
+/** Persian and Arabic first, then every other script the app speaks, then the phone's own fallback. */
+const FONT_STACK = "'Vazirmatn', 'Noto Naskh Arabic', 'Noto Sans Arabic', 'Noto Sans', 'Noto Sans CJK SC', 'Noto Sans CJK KR', 'Noto Sans CJK JP', 'Noto Sans Devanagari', Tahoma, sans-serif";
 /** A4 landscape, in millimeters. */
 const PAGE_MM = { width: 297, height: 210 };
 /**
@@ -47,7 +50,7 @@ const POSTER_MM_PER_UNIT = 0.14;
 export interface PdfOptions {
   treeName: string;
   isRTL: boolean;
-  locale: 'fa' | 'en';
+  locale: Locale;
   t: TFunction;
   /** Always the light theme: a PDF is for paper. */
   colors: Theme;
@@ -92,17 +95,12 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     y: p.y + PAD,
   });
 
-  const digits = (n: number | string) => (options.locale === 'fa' ? toPersianDigits(n) : String(n));
-  const year = (iso?: string) => {
-    const d = isoToJalali(iso);
-    return d ? digits(d.jy) : undefined;
-  };
-  const date = (iso?: string) => {
-    const d = isoToJalali(iso);
-    return d ? digits(`${d.jy}/${d.jm}/${d.jd}`) : '';
-  };
-  const nameOf = (p?: Person) => (!p ? '' : p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' '));
-  const firstNameOf = (p?: Person) => (!p ? '' : p.unknown ? t('unknown') : p.name);
+  // Shamsi in Persian, Gregorian in every other language (see calendarFor).
+  const calendar = calendarFor(options.locale);
+  const digits = calendar.digits;
+  const year = calendar.year;
+  const date = (iso?: string) => calendar.format(iso) ?? '';
+  const nameOf = (p?: Person) => (!p ? '' : fullName(p, t('unknown')));
   const lifeSpan = (p: Person) => {
     // Nothing at all when no date is known, rather than a lone "?".
     if (p.unknown || (!p.born && !p.died)) return '';
@@ -128,7 +126,9 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   // Lines first, so cards and markers sit on top of them.
   const lines: string[] = [];
   const markers: string[] = [];
-  for (const u of layout.unions) {
+  // Deeper bars first, so where one person's drops to several marriages
+  // overlap, each shorter drop shows its own color on top (see TreeCanvas).
+  for (const u of [...layout.unions].sort((a, b) => b.markerY - a.markerY)) {
     const routes = routeUnion(u);
     if (!routes) continue;
     const m = at({ x: u.markerX, y: u.markerY });
@@ -143,6 +143,10 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     };
     lines.push(`<path d="${routes.spouses.map(pathOf).join(' ')}" stroke="${color}" stroke-width="3" fill="none"${dash}/>`);
     addBox(m.x - MARKER_RX, barY - MARKER_R, m.x + MARKER_RX, barY + MARKER_R);
+    // Children born together: their shared, thicker line down to where it splits.
+    for (const { points } of routes.trunks) {
+      lines.push(`<path d="${pathOf(points)}" stroke="${colors.lineBlood}" stroke-width="4.5" fill="none"/>`);
+    }
     for (const { points } of routes.children) {
       lines.push(`<path d="${pathOf(points)}" stroke="${colors.lineBlood}" stroke-width="2.8" fill="none"/>`);
     }
@@ -217,6 +221,14 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
       .filter((m) => m.spouseIds.includes(id))
       .map((m) => nameOf(byId.get(m.spouseIds.find((sid) => sid !== id)!)))
       .join('، ');
+  // "Twin of …" / "One of 3 born together, with …" under the name.
+  const twinsNote = (id: ID) => {
+    const others = bornTogetherWith(data.marriages, id).map((x) => byId.get(x)).filter((x): x is Person => !!x);
+    if (others.length === 0) return '';
+    const names = others.map((o) => nameOf(o)).join(isRTL ? '، ' : ', ');
+    const text = others.length === 1 ? t('twinWith', { names }) : t('multipleBirthWith', { count: digits(others.length + 1), names });
+    return `<div class="twins">${escape(text)}</div>`;
+  };
   const order = data.people
     .map((p, i) => ({ p, i, g: layout.generationOf?.get(p.id) ?? 0 }))
     .sort((a, b) => a.g - b.g || a.i - b.i)
@@ -224,13 +236,13 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   const rows = order
     .map(
       (p) =>
-        `<tr><td class="name">${escape(nameOf(p))}</td><td>${escape(date(p.born))}</td><td>${escape(p.birthPlace ?? '')}</td>` +
+        `<tr><td class="name">${escape(nameOf(p))}${twinsNote(p.id)}</td><td>${escape(date(p.born))}</td><td>${escape(p.birthPlace ?? '')}</td>` +
         `<td>${escape(isDeceased(p) ? date(p.died) || t('deceasedStatus') : '')}</td><td>${escape(isDeceased(p) ? (p.gravePlace ?? '') : '')}</td>` +
         `<td>${escape(parentsOf(p.id))}</td><td>${escape(spousesOf(p.id))}</td></tr>`
     )
     .join('');
 
-  const exported = options.locale === 'fa' ? date(options.exportedAt.toISOString().slice(0, 10)) : options.exportedAt.toISOString().slice(0, 10);
+  const exported = date(options.exportedAt.toISOString().slice(0, 10));
   const subtitle = `${t('peopleCount', { count: digits(data.people.length) })} · ${exported}`;
 
   // The poster: the tree at a size you can read, cut into a grid of pages
@@ -325,6 +337,7 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
   th { background: ${colors.panel2}; text-align: start; font-weight: 700; }
   th, td { border: 1px solid ${colors.stroke}; padding: 5px 7px; vertical-align: top; }
   td.name { font-weight: 700; }
+  td.name .twins { font-weight: 400; font-size: 10px; color: ${colors.inkDim}; }
   tr { page-break-inside: avoid; }
 </style>
 </head>

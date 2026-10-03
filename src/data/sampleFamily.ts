@@ -50,3 +50,23 @@ export const sampleFamily: FamilyData = {
     { id: 'm-noor-bahram', spouseIds: ['noor', 'bahram'], status: 'ended', marriedYear: 1370, endedYear: 1376, childIds: ['ava'] },
   ],
 };
+
+/**
+ * The same family shape for the Galaxy Store build, which opens in English
+ * (or the phone's language): made-up English names, Gregorian-friendly
+ * dates. Marriage years are stored Shamsi like everywhere else (see
+ * marriageYearForDisplay): 1339 shows as 1960, 1369 as 1990, and so on.
+ */
+export const sampleFamilyEnglish: FamilyData = {
+  people: [
+    { id: 'elias', name: 'Elias', surname: 'Carter', gender: 'male', born: '1938-03-21', died: '2015-10-05', deceased: true, birthPlace: 'Boston', gravePlace: 'Boston, Forest Hills Cemetery', notes: 'Grandfather of the family; a retired teacher.' },
+    { id: 'maral', name: 'Mara', surname: 'Carter', gender: 'female', born: '1941-07-12', died: '2020-01-18', deceased: true, birthPlace: 'Portland', gravePlace: 'Portland, Riverview Cemetery', notes: 'Loved gardening and poetry.' },
+    { id: 'dara', name: 'Daniel', surname: 'Carter', gender: 'male', born: '1963-05-02', birthPlace: 'Boston', notes: 'Civil engineer; lives in Chicago.' },
+    { id: 'leyla', name: 'Laura', surname: 'Bennett', gender: 'female', born: '1966-11-20', birthPlace: 'Chicago', notes: 'Literature teacher.' },
+    { id: 'noor', name: 'Nora', surname: 'Carter', gender: 'female', born: '1967-09-08', birthPlace: 'Boston', notes: 'Doctor; the youngest of the family.' },
+    { id: 'kian', name: 'Kevin', surname: 'Carter', gender: 'male', born: '1994-02-14', birthPlace: 'Chicago', notes: 'Grandson of Elias and Mara.' },
+    { id: 'bahram', name: 'Bruce', surname: 'Hayes', gender: 'male', born: '1964-08-17', birthPlace: 'Denver' },
+    { id: 'ava', name: 'Ava', surname: 'Hayes', gender: 'female', born: '1993-06-11', birthPlace: 'Denver', nickname: 'Avie', notes: 'Daughter of Nora and Bruce.' },
+  ],
+  marriages: sampleFamily.marriages,
+};

@@ -4,10 +4,12 @@ import type { Marriage, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
-import { formatJalali } from '../utils/jalali';
+import { calendarFor } from '../utils/calendar';
 import { albumPhotoUri } from '../utils/album';
-import { isDeceased } from '../model/people';
+import { fullName, isDeceased, shortName } from '../model/people';
 import { PhotoViewer } from './PhotoViewer';
+import { bornTogetherWith } from '../layout/siblings';
+import { localDigits } from '../i18n/locales';
 
 interface Props {
   person: Person | null;
@@ -32,7 +34,7 @@ const SCROLLBAR_INSET = 8;
 const SCROLLBAR_MIN_THUMB = 28;
 
 export function PersonSheet({ person, people, marriages, visible, onClose, onShowTree, onFindRelationship }: Props) {
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
@@ -56,7 +58,9 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
     return parentMarriage ? parentMarriage.spouseIds.flatMap((id) => byId.get(id) ?? []) : [];
   }, [marriages, person, byId]);
   const children = useMemo(() => personMarriages.flatMap((m) => m.childIds.flatMap((id) => byId.get(id) ?? [])), [personMarriages, byId]);
-  const displayName = (p: Person) => (p.unknown ? t('unknown') : p.name);
+  const displayName = (p: Person) => shortName(p, t('unknown'));
+  // Their twins, triplets, ... (children born together), shown under their name.
+  const twins = person ? bornTogetherWith(marriages, person.id).map((id) => people.find((p) => p.id === id)).filter((p): p is Person => !!p) : [];
   const albumUris = useMemo(() => (person?.photos ?? []).map(albumPhotoUri), [person]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
@@ -113,12 +117,19 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
                 )}
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.name, isRTL && styles.textEnd]}>
-                    {person.unknown ? t('unknown') : `${person.name}${person.surname ? ' ' + person.surname : ''}`}
+                    {fullName(person, t('unknown'))}
                   </Text>
+                  {twins.length > 0 && (
+                    <Text style={[styles.dates, styles.twins, isRTL && styles.textEnd]}>
+                      {twins.length === 1
+                        ? t('twinWith', { names: twins.map((p) => shortName(p, t('unknown'))).join(isRTL ? '، ' : ', ') })
+                        : t('multipleBirthWith', { count: localDigits(twins.length + 1, locale), names: twins.map((p) => shortName(p, t('unknown'))).join(isRTL ? '، ' : ', ') })}
+                    </Text>
+                  )}
                   {!person.unknown && (
                     <Text style={[styles.dates, isRTL && styles.textEnd]}>
-                      {person.born ? `${t('bornPrefix')} ${formatJalali(person.born)}` : t('birthYearUnknown')}
-                      {person.died ? ` · ${t('diedPrefix')} ${formatJalali(person.died)}` : isDeceased(person) ? ` · ${t('deceasedStatus')}` : ` · ${t('living')}`}
+                      {person.born ? `${t('bornPrefix')} ${calendarFor(locale).format(person.born)}` : t('birthYearUnknown')}
+                      {person.died ? ` · ${t('diedPrefix')} ${calendarFor(locale).format(person.died)}` : isDeceased(person) ? ` · ${t('deceasedStatus')}` : ` · ${t('living')}`}
                     </Text>
                   )}
                 </View>
@@ -257,6 +268,7 @@ function createStyles(theme: Theme) {
   avatarText: { color: theme.lineMarriage, fontSize: 20, fontWeight: '700' },
   avatarImage: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.panel2 },
   name: { color: theme.ink, fontSize: 18, fontWeight: '700' },
+  twins: { color: theme.lineMarriage, fontWeight: '600' },
   dates: { color: theme.inkDim, fontSize: 13, marginTop: 3 },
   body: { gap: 14 },
   field: {},

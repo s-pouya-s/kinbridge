@@ -9,6 +9,20 @@ export function clamp(v: number, min: number, max: number) {
 const EDGE_SLACK = 0.4;
 
 /**
+ * The range clampAxis keeps one camera axis's translate in, for a fling to
+ * glide within (see TreeCanvas's pan). Defined before clampAxis on purpose:
+ * Reanimated captures what a worklet calls when this file loads, so a
+ * worklet defined later is still undefined then ("undefined is not a
+ * function", a real, previously-shipped bug).
+ */
+export function axisBounds(content: number, view: number, s: number): [number, number] {
+  'worklet';
+  const scaled = content * s;
+  const slack = view * EDGE_SLACK;
+  return scaled >= view ? [view - scaled - slack, slack] : [-slack, view - scaled + slack];
+}
+
+/**
  * Keeps one camera axis near the tree. `t` is that axis's translate,
  * `content` the tree's unscaled extent, `view` the canvas's extent. When the
  * scaled tree is bigger than the screen, the screen has to stay over the
@@ -20,7 +34,6 @@ const EDGE_SLACK = 0.4;
  */
 export function clampAxis(t: number, content: number, view: number, s: number) {
   'worklet';
-  const scaled = content * s;
-  const slack = view * EDGE_SLACK;
-  return scaled >= view ? clamp(t, view - scaled - slack, slack) : clamp(t, -slack, view - scaled + slack);
+  const [min, max] = axisBounds(content, view, s);
+  return clamp(t, min, max);
 }

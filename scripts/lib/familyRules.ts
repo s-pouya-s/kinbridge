@@ -4,6 +4,8 @@ import { CARD_METRICS, cardSize, type CardStyle } from '../../src/layout/layout'
 import { makeUnionRouter, segmentCrossesBox as crossesBox } from '../../src/layout/routes';
 import type { FamilyData, ID } from '../../src/types';
 import { cardText, MIN_NAME_SIZE, textWidth } from '../../src/components/cardText';
+import { shortName } from '../../src/model/people';
+import { groupsOf } from '../../src/layout/siblings';
 
 type P = { x: number; y: number };
 
@@ -103,6 +105,7 @@ export function familyProblems(data: FamilyData, options: RuleOptions = {}): str
         { points: r.spouses[0], own: [u.marriage.spouseIds[0]], what: `line from ${name(u.marriage.spouseIds[0])} to their marriage` },
         { points: r.spouses[1], own: [u.marriage.spouseIds[1]], what: `line from ${name(u.marriage.spouseIds[1])} to their marriage` },
         ...r.children.map((c) => ({ points: c.points, own: [c.childId], what: `line to child ${name(c.childId)}` })),
+        ...r.trunks.map((tr) => ({ points: tr.points, own: [] as ID[], what: `shared line to ${tr.childIds.map(name).join(', ')}` })),
       ];
       for (const line of lines) {
         for (let i = 1; i < line.points.length; i++) {
@@ -124,7 +127,7 @@ export function familyProblems(data: FamilyData, options: RuleOptions = {}): str
     for (const person of data.people) {
       const text = cardText(person, 'Unknown', style, w, h, metrics.nodeHeight, cardSize(layout.maxGen, metrics).growth);
       const lines = [
-        { line: text.name, full: person.unknown ? 'Unknown' : person.name, min: MIN_NAME_SIZE[style], max: maxSize(style, text.showPhoto, !!person.unknown) },
+        { line: text.name, full: shortName(person, 'Unknown'), min: MIN_NAME_SIZE[style], max: maxSize(style, text.showPhoto, !!person.unknown) },
         ...(text.surname ? [{ line: text.surname, full: person.surname!, min: MIN_NAME_SIZE[style] * 0.8, max: maxSize(style, text.showPhoto, false) * 0.7 }] : []),
       ];
       for (const { line, full, min, max } of lines) {
@@ -142,6 +145,19 @@ export function familyProblems(data: FamilyData, options: RuleOptions = {}): str
           ? (text.showPhoto ? 14 + text.photoSize + 10 : 0) + lineHeight(text.name.fontSize) + (text.surname ? 1 + lineHeight(text.surname.fontSize) : 0)
           : Math.max(text.showPhoto ? text.photoSize : 0, lineHeight(text.name.fontSize));
       if (used > h) say(`${name(person.id)}'s card text is taller than the card`);
+    }
+
+    // Children born together sit side by side: no brother or sister of
+    // theirs between them on their row.
+    for (const m of data.marriages) {
+      for (const group of groupsOf(m)) {
+        const at = group.map((id) => layout.positions.get(id)).filter((p): p is P => !!p);
+        if (at.length < 2 || new Set(at.map((p) => p.y)).size > 1) continue;
+        const lo = Math.min(...at.map((p) => p.x));
+        const hi = Math.max(...at.map((p) => p.x));
+        const between = m.childIds.filter((c) => !group.includes(c) && layout.positions.get(c)?.y === at[0].y && layout.positions.get(c)!.x > lo && layout.positions.get(c)!.x < hi);
+        if (between.length > 0) say(`${between.map(name).join(', ')} sits between ${group.map(name).join(', ')}, who were born together`);
+      }
     }
 
     // Only one marker per spot.

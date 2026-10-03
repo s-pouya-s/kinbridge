@@ -1,17 +1,20 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import type { CardStyle } from '../layout/layout';
+import { AVAILABLE_LOCALES } from '../i18n';
+import { localeInfo, type Locale } from '../i18n/locales';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
   editMode: boolean;
   onToggleEditMode: () => void;
-  onToggleLocale: () => void;
+  /** Switches the app to this language. */
+  onSetLocale: (locale: Locale) => void;
   onToggleTheme: () => void;
   showMinimap: boolean;
   onToggleMinimap: () => void;
@@ -43,7 +46,7 @@ export function SideMenu({
   onClose,
   editMode,
   onToggleEditMode,
-  onToggleLocale,
+  onSetLocale,
   onToggleTheme,
   showMinimap,
   onToggleMinimap,
@@ -58,6 +61,7 @@ export function SideMenu({
   onExport,
   onExportPdf,
 }: Props) {
+  const [languagesOpen, setLanguagesOpen] = useState(false);
   const { t, isRTL, locale } = useI18n();
   const { theme, mode } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -114,8 +118,35 @@ export function SideMenu({
             />
             <View style={styles.divider} />
             {/* Each language is named in itself, not translated, so someone
-                who can't read the current one can still find their own. */}
-            <MenuRow styles={styles} label={t('language')} value={locale === 'fa' ? 'فارسی' : 'English'} onPress={onToggleLocale} />
+                who can't read the current one can still find their own. The
+                list opens right here in the menu, so no second pop-up stacks
+                on top of it. */}
+            <MenuRow
+              styles={styles}
+              label={t('language')}
+              value={localeInfo(locale).nativeName}
+              trailing={languagesOpen ? '▴' : '▾'}
+              onPress={() => setLanguagesOpen((open) => !open)}
+            />
+            {/* Its own tinted box, so the list stands apart from the menu around it. */}
+            {languagesOpen && (
+              <View style={styles.subList}>
+                {AVAILABLE_LOCALES.map((l) => (
+                  <MenuRow
+                    key={l.code}
+                    styles={styles}
+                    nested
+                    label={l.nativeName}
+                    value={l.code === locale ? '✓' : ''}
+                    active={l.code === locale}
+                    onPress={() => {
+                      setLanguagesOpen(false);
+                      if (l.code !== locale) onSetLocale(l.code);
+                    }}
+                  />
+                ))}
+              </View>
+            )}
             <MenuRow styles={styles} label={t('themeLabel')} icon={mode === 'dark' ? '🌙' : '☀️'} value={mode === 'dark' ? t('dark') : t('light')} onPress={onToggleTheme} />
             <MenuRow styles={styles} label={t('minimap')} value={showMinimap ? t('on') : t('off')} active={showMinimap} onPress={onToggleMinimap} />
             <MenuRow styles={styles} label={t('cardStyle')} value={cardStyle === 'large' ? t('cardStyleLarge') : t('cardStyleCompact')} onPress={onToggleCardStyle} />
@@ -146,20 +177,26 @@ function MenuRow({
   label,
   value,
   icon,
+  trailing,
   active,
+  nested,
   onPress,
   styles,
 }: {
   label: string;
   value?: string;
   icon?: string;
+  /** A small mark after the value, such as ▾ for a row that opens a list. Its own Text, never mixed into Persian text. */
+  trailing?: string;
   active?: boolean;
+  /** A row inside a sub-list (see subList): pressing fades it instead of tinting, since the list is already tinted. */
+  nested?: boolean;
   onPress: () => void;
   styles: Styles;
 }) {
   const { isRTL } = useI18n();
   return (
-    <Pressable style={({ pressed }) => [styles.row, isRTL && styles.rowRTL, pressed && styles.rowPressed]} onPress={onPress}>
+    <Pressable style={({ pressed }) => [styles.row, isRTL && styles.rowRTL, pressed && (nested ? styles.rowPressedNested : styles.rowPressed)]} onPress={onPress}>
       <Text style={[styles.rowLabel, isRTL && styles.textRTL]}>{label}</Text>
       {value != null && (
         <View style={[styles.rowValueWrap, isRTL && styles.rowRTL]}>
@@ -167,6 +204,7 @@ function MenuRow({
           <Text style={[styles.rowValue, active && styles.rowValueActive]} numberOfLines={1}>
             {value}
           </Text>
+          {trailing && <Text style={styles.rowTrailing}>{trailing}</Text>}
         </View>
       )}
     </Pressable>
@@ -200,6 +238,10 @@ function createStyles(theme: Theme) {
     },
     rowRTL: { flexDirection: 'row-reverse' },
     rowPressed: { backgroundColor: theme.panel2 },
+    rowPressedNested: { opacity: 0.6 },
+    rowTrailing: { color: theme.inkDim, fontSize: 13 },
+    // The language list: a tinted, slightly indented box under its row.
+    subList: { backgroundColor: theme.panel2, borderRadius: 12, marginHorizontal: 10, marginBottom: 6, paddingVertical: 4, overflow: 'hidden' },
     rowLabel: { color: theme.ink, fontSize: 15, fontWeight: '600', flexShrink: 1 },
     // Never shrinks to nothing (see MenuRow), but a long value such as a
     // tree's name is capped at one line instead of crowding out the label.

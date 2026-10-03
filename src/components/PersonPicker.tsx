@@ -4,7 +4,9 @@ import type { Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
-import { formatJalali } from '../utils/jalali';
+import { calendarFor } from '../utils/calendar';
+import { fullName } from '../model/people';
+import { useKeyboardHeight } from '../utils/useKeyboardHeight';
 
 interface Props {
   visible: boolean;
@@ -23,18 +25,20 @@ interface Props {
  * tree (a cousin marriage, or two separately-started trees meeting).
  */
 export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree }: Props) {
-  const { t, isRTL } = useI18n();
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   // Modals draw edge-to-edge too, so the sheet adds the system bars' own
   // insets itself — otherwise its last row sits under the back/home bar.
   const insets = useSafeAreaInsets();
+  // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
+  const keyboardHeight = useKeyboardHeight();
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return people;
-    return people.filter((p) => !p.unknown && `${p.name} ${p.surname ?? ''}`.toLowerCase().includes(q));
+    return people.filter((p) => !p.unknown && `${p.name} ${p.surname ?? ''} ${p.nickname ?? ''}`.toLowerCase().includes(q));
   }, [people, query]);
 
   return (
@@ -42,7 +46,7 @@ export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree 
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
-      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
+      <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <Text style={[styles.title, isRTL && styles.textEnd]}>{t('selectPerson')}</Text>
@@ -57,8 +61,8 @@ export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree 
             {filtered.length === 0 && <Text style={[styles.emptyHint, isRTL && styles.textEnd]}>{t('noMatchingPeople')}</Text>}
             {filtered.map((p) => (
               <Pressable key={p.id} style={[styles.row, isRTL && styles.rowRTL]} onPress={() => onSelect(p.id)}>
-                <Text style={[styles.rowName, isRTL && styles.textEnd]}>{p.unknown ? t('unknown') : [p.name, p.surname].filter(Boolean).join(' ')}</Text>
-                <Text style={[styles.rowMeta, isRTL && styles.textEnd]}>{p.born ? `${t('bornPrefix')} ${formatJalali(p.born)}` : t('birthYearUnknown')}</Text>
+                <Text style={[styles.rowName, isRTL && styles.textEnd]}>{fullName(p, t('unknown'))}</Text>
+                <Text style={[styles.rowMeta, isRTL && styles.textEnd]}>{p.born ? `${t('bornPrefix')} ${calendarFor(locale).format(p.born)}` : t('birthYearUnknown')}</Text>
               </Pressable>
             ))}
           </ScrollView>

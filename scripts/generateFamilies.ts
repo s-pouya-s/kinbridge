@@ -23,9 +23,13 @@ const OUT = 'test-families';
 
 const FIRST_M = ['Adam', 'Ben', 'Cyrus', 'Dan', 'Eli', 'Farid', 'Gil', 'Hugo', 'Ivan', 'Jon', 'Karl', 'Leo', 'Milo', 'Nate', 'Omar', 'Paul', 'Rex', 'Sam', 'Theo', 'Ugo', 'Vic', 'Will', 'Yan', 'Zed'];
 const FIRST_F = ['Ada', 'Bea', 'Cora', 'Dina', 'Eva', 'Fay', 'Gia', 'Hana', 'Iris', 'June', 'Kira', 'Lina', 'Mia', 'Nora', 'Opal', 'Pia', 'Rosa', 'Sara', 'Tara', 'Una', 'Vera', 'Wren', 'Yara', 'Zoe'];
+/** Names in other scripts the app speaks (Chinese, Korean, Japanese, Russian, Hindi), to test card text fitting in them. */
+const WORLD_NAMES = ['王小明', '李华', '김민준', '이서연', '佐藤ゆうき', 'さくら', 'Александр', 'Екатерина', 'राजेश', 'प्रियंका शर्मा', 'Mehmet Öztürk', 'Zoë Müller'];
 /** Very long names, to test that text never runs past a card's edge. */
 const LONG_FIRST = ['Bartholomew-Alexander', 'Maximiliana Seraphina', 'Wolfgang Amadeus Theodor', 'Anastasiya-Konstantina', 'Christopherson', 'Evangelina Rosalind Marie', 'Montgomery-Fitzwilliam', 'Wilhelmina Charlotte'];
 const LONG_SURNAMES = ['Featherstonehaugh-Montmorency', 'Vanderbilt-Rockefeller-Astor', 'Wolfeschlegelsteinhausen', 'Ravenscroft-Ashworth'];
+/** Nicknames, shown in brackets after the name on a card. */
+const NICKNAMES = ['Bob', 'Liz', 'Sunny', 'Doc', 'Ace', 'Bea', 'Kit', 'Junior', 'Nana', 'Pip'];
 const SURNAMES = ['Ash', 'Birch', 'Cedar', 'Dale', 'Elm', 'Fern', 'Glen', 'Heath', 'Ivy', 'Juniper', 'Knoll', 'Larch', 'Moss', 'North', 'Oak', 'Pine', 'Quill', 'Reed', 'Stone', 'Thorn', 'Vale', 'Wood'];
 
 /** mulberry32: a small seeded random number generator. */
@@ -73,13 +77,14 @@ function makeFamily(index: number): TestFamily {
   const newPerson = (gen: number, surname: string | undefined, family: number, outsider = false): ID => {
     const id = `p${nextId++}`;
     const gender = chance(0.08) ? undefined : chance(0.5) ? 'male' : 'female';
-    const person: Person = { id, name: chance(0.06) ? pick(LONG_FIRST) : pick(gender === 'female' ? FIRST_F : FIRST_M), gender };
+    const person: Person = { id, name: chance(0.06) ? pick(LONG_FIRST) : chance(0.05) ? pick(WORLD_NAMES) : pick(gender === 'female' ? FIRST_F : FIRST_M), gender };
     if (surname && !(outsider && chance(0.3))) person.surname = outsider ? (chance(0.05) ? pick(LONG_SURNAMES) : pick(SURNAMES)) : surname;
     if (chance(0.6)) {
       const year = 1900 + gen * 26 + Math.floor(r() * 16) - 8;
       person.born = `${year}-${String(1 + Math.floor(r() * 12)).padStart(2, '0')}-${String(1 + Math.floor(r() * 28)).padStart(2, '0')}`;
     }
     if (gen <= 1 && chance(0.5)) person.deceased = true;
+    if (chance(0.08)) person.nickname = chance(0.2) ? pick(LONG_FIRST) : pick(NICKNAMES);
     if (chance(0.03)) person.name = `Unnamed ${nextId}`;
     people.push(person);
     depth.set(id, gen);
@@ -194,6 +199,25 @@ function makeFamily(index: number): TestFamily {
       m.manualChildOrder = true;
     }
   }
+  // Children born together: twins up to quintuplets, sometimes two sets in
+  // one marriage. They share a birth date.
+  for (const m of marriages) {
+    if (m.childIds.length < 2 || !chance(0.15)) continue;
+    const size = 2 + Math.floor(r() * Math.min(4, m.childIds.length - 1));
+    const start = Math.floor(r() * (m.childIds.length - size + 1));
+    const groups = [m.childIds.slice(start, start + size)];
+    const rest = m.childIds.filter((id) => !groups[0].includes(id));
+    if (rest.length >= 2 && chance(0.2)) groups.push(rest.slice(0, 2));
+    for (const g of groups) {
+      const born = people.find((p) => p.id === g[0])?.born;
+      for (const id of g) {
+        const p = people.find((q) => q.id === id)!;
+        if (born) p.born = born;
+        else delete p.born;
+      }
+    }
+    m.multipleBirths = groups;
+  }
   // Hand-set generations, as on real trees: an outsider or founder lined up
   // with their spouse's row, or a person nudged down a row.
   for (const p of people) {
@@ -252,6 +276,12 @@ function situationsOf(data: FamilyData, parentsOf: Map<ID, ID[]>, depth: Map<ID,
     if (p.manualGeneration != null && parentsOf.has(p.id) && p.manualGeneration > (depth.get(p.id) ?? 0)) out.add('child moved down by hand');
   }
   if (data.people.length === 1) out.add('single person');
+  if (data.people.some((p) => p.nickname)) out.add('nickname');
+  const groupSizes = data.marriages.flatMap((m) => (m.multipleBirths ?? []).map((g) => g.length));
+  if (groupSizes.length > 0) out.add('twins');
+  if (groupSizes.some((n) => n >= 3)) out.add('three or more born together');
+  if (groupSizes.some((n) => n >= 5)) out.add('five born together');
+  if (data.people.some((p) => WORLD_NAMES.includes(p.name))) out.add('name in another script');
   if (data.people.length >= 150) out.add('150 or more people');
   if (data.people.length >= 450) out.add('450 or more people');
   if (Math.max(...depth.values()) >= 9) out.add('10 or more generations');

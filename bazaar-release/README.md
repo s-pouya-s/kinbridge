@@ -21,6 +21,16 @@ below, and keep both files backed up somewhere outside git in addition to
 the git history (a lost private key means this app can never be updated on
 Bazaar again under this signing identity).
 
+## The pipeline does this for you
+
+Cafe Bazaar now takes the app bundle (`.aab`) itself. Every push to `main`
+runs `.github/workflows/release-builds.yml`, which builds the release bundle
+and signs it with this key (kept as the repository secret
+`BAZAAR_SIGNING_KEY`, the PEM text of `.ssh-key`) and `cert.pem`. Download
+the `kinbridge-bazaar` artifact from the run and upload its
+`kinbridge-bazaar.aab`. The `.bin` steps below are the older way, kept for
+reference.
+
 ## Regenerating `app.bin` for a new release
 
 You'll need Java 8+ and OpenSSL locally (OpenSSL is preinstalled almost

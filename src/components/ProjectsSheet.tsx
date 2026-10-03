@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Project } from '../storage/storage';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
+import { useKeyboardHeight } from '../utils/useKeyboardHeight';
 
 interface Props {
   visible: boolean;
@@ -31,6 +32,8 @@ export function ProjectsSheet({ visible, projects, activeId, activePeopleCount, 
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
+  // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
+  const keyboardHeight = useKeyboardHeight();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -48,7 +51,7 @@ export function ProjectsSheet({ visible, projects, activeId, activePeopleCount, 
 
   return (
     <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={[styles.backdrop, { paddingTop: insets.top }]}>
+      <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <Text style={[styles.title, isRTL && styles.textRTL]}>{t('familyTrees')}</Text>
