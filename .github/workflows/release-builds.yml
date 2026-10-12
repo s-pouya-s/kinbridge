@@ -96,6 +96,11 @@ jobs:
 
       - run: npm ci
 
+      # The dev client is only for development builds: leave it out of every
+      # release build (package.json stays as it is).
+      - name: Drop the dev client
+        run: npm uninstall --no-save expo-dev-client
+
       # The Android SDK comes preinstalled on GitHub's Ubuntu runners (ANDROID_HOME).
       - name: Generate the Android project
         run: npx expo prebuild --platform android --no-install --clean

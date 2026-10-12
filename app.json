@@ -18,6 +18,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
+      "blockedPermissions": ["android.permission.SYSTEM_ALERT_WINDOW"],
       "versionCode": 4
     },
     "web": {
@@ -28,7 +29,9 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Family Tree needs access to your photos so you can add a picture for someone in the family tree."
+          "photosPermission": "Family Tree needs access to your photos so you can add a picture for someone in the family tree.",
+          "cameraPermission": false,
+          "microphonePermission": false
         }
       ],
       [

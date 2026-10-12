@@ -281,6 +281,8 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - Cafe Bazaar takes a signed `.bin` made with `bundlesigner genbin` from the `.aab` (bazaar-release/README.md). Always sign with the same `.ssh-key` (project root, git-ignored) and the tracked `bazaar-release/cert.pem`. Never regenerate the certificate: Bazaar compares it byte for byte. Use `--v2-signing-enabled true --v3-signing-enabled false` with the key as PKCS#8 DER.
 - `.gitignore` ignores `*.pem` but keeps `!/bazaar-release/cert.pem`, and that line must stay after `*.pem`. `/bazaar-release/*.bin`, `.ssh-key`, `/android`, `/ios` and `/local/` stay ignored.
 - The EAS workflow builds Android only.
+- Cafe Bazaar rejects camera, microphone and draw-over-other-apps permissions the app doesn't use. app.json keeps `cameraPermission: false` and `microphonePermission: false` on expo-image-picker (photos come from the gallery only) and blocks `SYSTEM_ALERT_WINDOW` in `android.blockedPermissions`. Any new permission needs a real use in the app.
+- Release builds leave out `expo-dev-client` (the pipeline runs `npm uninstall --no-save expo-dev-client` before prebuild), so no dev menu or `exp+kinbridge` link ships to a store.
 
 ## Store versions
 
