@@ -60,3 +60,7 @@ yarn-error.*
 
 # Personal test data (real family trees). Never committed, never shipped: see AGENTS.md.
 /local/
+
+# Play App Signing upload (PEPK output: the signing key, encrypted for Google) and its tools. Never commit.
+/bazaar-release/*.zip
+pepk*.jar

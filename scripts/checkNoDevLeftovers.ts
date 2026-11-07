@@ -110,10 +110,10 @@ try {
 }
 if (tracked) {
   const forbidden = tracked.filter(
-    (f) => /^(android|ios|local|\.expo)\//.test(f) || /(^|\/)\.ssh-key$/.test(f) || /\.(jks|keystore|p12|pk8|bin|log)$/.test(f) || /(^|\/)\.env(\.|$)/.test(f)
+    (f) => /^(android|ios|local|\.expo)\//.test(f) || /(^|\/)\.ssh-key$/.test(f) || /\.(jks|keystore|p12|pk8|bin|log)$/.test(f) || /^bazaar-release\/.*\.zip$/.test(f) || /(^|\/)pepk[^/]*\.jar$/.test(f) || /(^|\/)\.env(\.|$)/.test(f)
   );
   if (forbidden.length) fail(`these must not be tracked: ${forbidden.slice(0, 10).join(', ')}${forbidden.length > 10 ? ' …' : ''}`);
-  else ok(`no android/, ios/, local/, keys, .bin, .log or .env files tracked (${tracked.length} files)`);
+  else ok(`no android/, ios/, local/, keys, signing-key zips, .bin, .log or .env files tracked (${tracked.length} files)`);
 }
 
 if (failures) {

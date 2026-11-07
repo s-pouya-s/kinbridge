@@ -139,7 +139,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
   - the dev client in app.json;
   - package.json `android`/`ios` scripts rewritten by `expo prebuild`;
   - the release pipeline no longer running `npm uninstall --no-save expo-dev-client`;
-  - tracked `android/`, `ios/`, `local/`, `.expo/`, `.ssh-key`, `*.jks`, `*.keystore`, `*.p12`, `*.pk8`, `*.bin`, `*.log` or `.env` files.
+  - tracked `android/`, `ios/`, `local/`, `.expo/`, `.ssh-key`, `*.jks`, `*.keystore`, `*.p12`, `*.pk8`, `*.bin`, `*.log` or `.env` files, the Play signing-key upload (`bazaar-release/*.zip`, PEPK output) or the PEPK tool.
 - Comments are ignored, so explaining a past dev-only problem in a comment is fine.
 - Fix a failure by removing the leftover, never by loosening the check or committing with `--no-verify`.
 
@@ -331,7 +331,13 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - Cafe Bazaar takes a signed `.bin` made with `bundlesigner genbin` from the `.aab` (bazaar-release/README.md). Always sign with the same `.ssh-key` (project root, git-ignored) and the tracked `bazaar-release/cert.pem`. Never regenerate the certificate: Bazaar compares it byte for byte. Use `--v2-signing-enabled true --v3-signing-enabled false` with the key as PKCS#8 DER.
 - `.gitignore` ignores `*.pem` but keeps `!/bazaar-release/cert.pem`, and that line must stay after `*.pem`. `/bazaar-release/*.bin`, `.ssh-key`, `/android`, `/ios` and `/local/` stay ignored.
 - The EAS workflow builds Android only.
-- Cafe Bazaar rejects camera, microphone and draw-over-other-apps permissions the app doesn't use. app.json keeps `cameraPermission: false` and `microphonePermission: false` on expo-image-picker (photos come from the gallery only) and blocks `SYSTEM_ALERT_WINDOW` in `android.blockedPermissions`. Any new permission needs a real use in the app.
+- Cafe Bazaar rejects camera, microphone and draw-over-other-apps permissions the app doesn't use. app.json keeps `cameraPermission: false` and `microphonePermission: false` on expo-image-picker (photos come from the gallery only) and blocks `SYSTEM_ALERT_WINDOW` and `VIBRATE` (both from Expo's project template; nothing in the app vibrates) in `android.blockedPermissions`. Any new permission needs a real use in the app.
+- The expected permissions (each release run lists them on its summary page) and why:
+  - `INTERNET`, `ACCESS_NETWORK_STATE`, `WAKE_LOCK`, `com.google.android.gms.permission.AD_ID`: the ads (react-native-google-mobile-ads / Google ads library).
+  - `ACCESS_ADSERVICES_AD_ID`, `ACCESS_ADSERVICES_ATTRIBUTION`, `ACCESS_ADSERVICES_TOPICS`: the Google ads library, for Android's Privacy Sandbox (ad ID, measuring clicks and installs, interest topics). No prompt to the user.
+  - `FOREGROUND_SERVICE`: Android WorkManager, which the Google ads library brings in. A normal permission, no prompt, no foreground service type.
+  - `READ_EXTERNAL_STORAGE`, `WRITE_EXTERNAL_STORAGE`: expo-image-picker and expo-file-system, only on Android 12 and older (`maxSdkVersion 32`); picking photos asks for it there (`requestMediaLibraryPermissionsAsync`).
+  - `<package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`: added by Android itself, only this app can use it.
 - Release builds leave out `expo-dev-client` (the pipeline runs `npm uninstall --no-save expo-dev-client` before prebuild), so no dev menu or `exp+kinbridge` link ships to a store.
 
 ## Store versions
@@ -341,7 +347,14 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - eas.json: `preview` / `production` are Bazaar; `preview-play` / `production-play` are Google Play.
 - A fresh Play install opens on `sampleFamilyEnglish` (made-up English names, same shape as the Persian sample); Bazaar on `sampleFamily`. Both are checked by `check:families`.
 - To look at the Play version in Expo Go: `EXPO_PUBLIC_APP_VARIANT=play npx expo start --tunnel --go`.
-- Google Play App Signing must use our own key: upload the Bazaar key as the app signing key (Google's PEPK tool), never let Google make one. Otherwise Play and Bazaar builds have different signatures, a user switching stores must uninstall first, and that deletes their trees (they live only on the phone).
+- Google Play App Signing must use our own key: upload the Bazaar key as the app signing key (Google's PEPK tool), never let Google make one. The PEPK upload zip (`bazaar-release/*.zip`) holds the key encrypted for Google plus `certificate.pem`; its certificate was checked identical to `bazaar-release/cert.pem` (SHA-256 99:B3:11:22…) on 2026-11-07. It's git-ignored; delete it after uploading. Otherwise Play and Bazaar builds have different signatures, a user switching stores must uninstall first, and that deletes their trees (they live only on the phone).
+
+## Store listing and privacy policy
+
+- `store-listing/google-play/` holds what Google Play shows: `icon-512.png`, `feature-graphic-1024x500.png` and `listing-en.md` (name, short and full description, translated from the Cafe Bazaar text).
+- The website and the privacy policy live in the separate `kinbridge-website` repository (Astro, deployed to a free Cloudflare Worker): https://kinbridge.pouyashojaee.ir and https://kinbridge.pouyashojaee.ir/privacy-policy/ (English, Google Play only). It also serves `app-ads.txt` for AdMob.
+- The privacy policy must stay true to the code. When ads, permissions, storage or anything that leaves the phone changes, update the policy in `kinbridge-website` and its date.
+- The store graphics come from the app's own icon and `assets/logo-source.png`, on the app's wine red (`#400C1F`), with the Marcellus font for the name.
 
 ## Builds
 
@@ -353,6 +366,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - One signing identity for all three files: the Bazaar key. The repository secret `BAZAAR_SIGNING_KEY` holds the private key (the PEM text of `.ssh-key`), and `bazaar-release/cert.pem` is its certificate; the pipeline checks they match and fails clearly if the secret is missing. So the phone APK installs as an update over the Bazaar install, and the Play app has the same identity. Never sign with any other key.
 - Each build lists every phone permission it asks for on the run's summary page ("List the phone permissions" step), read from Android's final merged manifest after the build, with a plain-English meaning for the known ones. A permission the list doesn't know shows as "New: check what needs it". Add a meaning there when a new one is expected, and remember Bazaar rejects camera, microphone and draw-over-other-apps permissions.
 - The pipeline sets the version code to 100 plus the run number (`ANDROID_VERSION_CODE`, read by app.config.js), so every build is newer than the last upload. Other builds keep app.json's.
+- The version name people see is `version` in app.json (and package.json, kept the same). Raise it for each store release with new features (1.1.0 on 2026-11-07, the first Google Play release). Keep app.json's `versionCode` at least the pipeline's latest (100 plus the last run number), so a build made outside the pipeline is never older than an upload.
 - `expo prebuild` rewrites the `android`/`ios` scripts in package.json; don't commit that (the owner runs the app through Expo Go).
 - Cloud builds on EAS: `npx eas build --profile preview --platform android`. The preview profile must keep `EXPO_PUBLIC_ADS_TEST=1` (see Ads).
 
