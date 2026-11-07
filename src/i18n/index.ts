@@ -44,7 +44,7 @@ export const AVAILABLE_LOCALES = LOCALES.filter((l) => catalogs[l.code]);
 const LOCALE_KEY = 'kinbridge:locale:v1';
 
 /**
- * Where a fresh install starts: Persian for Bazaar; for Galaxy Store the
+ * Where a fresh install starts: Persian for Bazaar; for Google Play the
  * phone's language when the app speaks it, else English.
  */
 export function defaultLocale(): Locale {
@@ -72,12 +72,15 @@ interface I18nContextValue {
   isRTL: boolean;
   t: TFunction;
   setLocale: (locale: Locale) => void;
+  /** False until the saved language has been read, so nothing flashes in the wrong language first (the launch splash waits for it). */
+  ready: boolean;
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 export function I18nProvider({ children, initialLocale = defaultLocale() }: { children: React.ReactNode; initialLocale?: Locale }) {
   const [locale, setLocaleState] = useState<Locale>(initialLocale);
+  const [ready, setReady] = useState(false);
 
   // A language the user picked before wins over the default.
   useEffect(() => {
@@ -86,7 +89,8 @@ export function I18nProvider({ children, initialLocale = defaultLocale() }: { ch
         const match = matchLocale(saved);
         if (match && catalogs[match]) setLocaleState(match);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setReady(true));
   }, []);
 
   const value = useMemo<I18nContextValue>(() => {
@@ -99,8 +103,9 @@ export function I18nProvider({ children, initialLocale = defaultLocale() }: { ch
         setLocaleState(next);
         AsyncStorage.setItem(LOCALE_KEY, next).catch(() => {});
       },
+      ready,
     };
-  }, [locale]);
+  }, [locale, ready]);
 
   return React.createElement(I18nContext.Provider, { value }, children);
 }

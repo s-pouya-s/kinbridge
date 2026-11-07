@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "شجره نامه",
+    "name": "تبارنامه",
     "slug": "kinbridge",
     "version": "1.0.0",
     "orientation": "default",
@@ -12,7 +12,7 @@
     "android": {
       "package": "com.pouya_kinbridge.shajarehnameh",
       "adaptiveIcon": {
-        "backgroundColor": "#080F19",
+        "backgroundColor": "#400C1F",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -47,12 +47,13 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#080F19"
+          "backgroundColor": "#400C1F"
         }
       ],
-      "expo-localization"
+      ["expo-localization", { "supportsRTL": false }]
     ],
     "extra": {
+      "supportsRTL": false,
       "eas": {
         "projectId": "4c32c070-86f0-4950-b741-61ad9167ecf0"
       }

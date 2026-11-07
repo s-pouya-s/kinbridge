@@ -27,3 +27,27 @@ export function confirmDestructive(title: string, message: string, confirmLabel:
     { text: confirmLabel, style: 'destructive', onPress: onConfirm },
   ]);
 }
+
+/**
+ * Asks what to do with unsaved edits: Save, Discard, or Keep editing (the
+ * cancel button, which does nothing). On web, where there are only browser
+ * dialogs, OK saves; otherwise a second dialog offers to discard.
+ */
+export function confirmUnsaved(
+  title: string,
+  message: string,
+  labels: { save: string; discard: string; keepEditing: string },
+  onSave: () => void,
+  onDiscard: () => void
+) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onSave();
+    else if (window.confirm(`${title}\n\n${labels.discard}?`)) onDiscard();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: labels.keepEditing, style: 'cancel' },
+    { text: labels.discard, style: 'destructive', onPress: onDiscard },
+    { text: labels.save, onPress: onSave },
+  ]);
+}

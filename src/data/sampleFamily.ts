@@ -52,7 +52,7 @@ export const sampleFamily: FamilyData = {
 };
 
 /**
- * The same family shape for the Galaxy Store build, which opens in English
+ * The same family shape for the Google Play build, which opens in English
  * (or the phone's language): made-up English names, Gregorian-friendly
  * dates. Marriage years are stored Shamsi like everywhere else (see
  * marriageYearForDisplay): 1339 shows as 1960, 1369 as 1990, and so on.

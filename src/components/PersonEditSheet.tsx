@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Gender, ID, Marriage, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import { PersonPicker } from './PersonPicker';
 import { MarriagePicker } from './MarriagePicker';
 import { canBeChildOf } from '../model/mutations';
 import { useKeyboardHeight } from '../utils/useKeyboardHeight';
+import { confirmDestructive } from '../utils/alert';
 
 interface Props {
   person: Person | null;
@@ -22,6 +23,10 @@ interface Props {
   marriages: Marriage[];
   visible: boolean;
   onClose: () => void;
+  /** Something was added or removed from this sheet (spouse, parents, children) since it opened. */
+  treeChanged: boolean;
+  /** Cancel after a change: undo everything done in this sheet and close it. */
+  onDiscard: () => void;
   onSave: (patch: Partial<Person>) => void;
   /** The parent is responsible for confirming with the user — this fires only once that's done. */
   onDelete: () => void;
@@ -48,6 +53,8 @@ export function PersonEditSheet({
   marriages,
   visible,
   onClose,
+  treeChanged,
+  onDiscard,
   onSave,
   onDelete,
   onAddSpouse,
@@ -87,20 +94,40 @@ export function PersonEditSheet({
   // object, which would otherwise throw away what was typed but not saved
   // (see MarriageEditSheet, where this shipped as a bug).
   const personId = person?.id;
+  // What the form held when it was filled, to tell whether anything changed
+  // since (closing then asks before throwing the changes away).
+  const filledWith = useRef('');
+  const formValues = (v: { name: string; surname: string; nickname: string; gender?: Gender; photo?: string; born?: string; died?: string; deceased: boolean; birthPlace: string; gravePlace: string; notes: string; album: string[] }) =>
+    JSON.stringify([v.name, v.surname, v.nickname, v.gender ?? null, v.photo ?? null, v.born ?? null, v.died ?? null, v.deceased, v.birthPlace, v.gravePlace, v.notes, v.album]);
   useEffect(() => {
     if (!person || !visible) return;
-    setName(person.name ?? '');
-    setSurname(person.surname ?? '');
-    setNickname(person.nickname ?? '');
-    setGender(person.gender);
-    setPhoto(person.photoUri);
-    setBorn(person.born);
-    setDied(person.died);
-    setDeceased(isDeceased(person));
-    setBirthPlace(person.birthPlace ?? '');
-    setGravePlace(person.gravePlace ?? '');
-    setNotes(person.notes ?? '');
-    setAlbum(person.photos ?? []);
+    const v = {
+      name: person.name ?? '',
+      surname: person.surname ?? '',
+      nickname: person.nickname ?? '',
+      gender: person.gender,
+      photo: person.photoUri,
+      born: person.born,
+      died: person.died,
+      deceased: isDeceased(person),
+      birthPlace: person.birthPlace ?? '',
+      gravePlace: person.gravePlace ?? '',
+      notes: person.notes ?? '',
+      album: person.photos ?? [],
+    };
+    filledWith.current = formValues(v);
+    setName(v.name);
+    setSurname(v.surname);
+    setNickname(v.nickname);
+    setGender(v.gender);
+    setPhoto(v.photo);
+    setBorn(v.born);
+    setDied(v.died);
+    setDeceased(v.deceased);
+    setBirthPlace(v.birthPlace);
+    setGravePlace(v.gravePlace);
+    setNotes(v.notes);
+    setAlbum(v.album);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [personId, visible]);
 
@@ -130,6 +157,13 @@ export function PersonEditSheet({
     if (added.length > 0) setAlbum((current) => [...current, ...added]);
   };
 
+  const changed = treeChanged || formValues({ name, surname, nickname, gender, photo, born, died, deceased, birthPlace, gravePlace, notes, album }) !== filledWith.current;
+  /** Closing without Save: asks first when something was changed, then undoes all of it (typed fields and people added or removed here). */
+  const requestClose = () => {
+    if (!changed) return onClose();
+    confirmDestructive(t('unsavedTitle'), t('unsavedSheetMessage'), t('discard'), t('keepEditing'), onDiscard);
+  };
+
   const handleSave = () => {
     if (!nameValid) return;
     onSave({
@@ -152,12 +186,12 @@ export function PersonEditSheet({
   };
 
   return (
-    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={requestClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
       <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Text style={[styles.title, isRTL && styles.textEnd]}>{t('editPerson')}</Text>
@@ -362,7 +396,7 @@ export function PersonEditSheet({
               <Text style={styles.dangerButtonText}>{t('deletePerson')}</Text>
             </Pressable>
 
-            <Pressable style={styles.cancelButton} onPress={onClose}>
+            <Pressable style={styles.cancelButton} onPress={requestClose}>
               <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </Pressable>
           </ScrollView>

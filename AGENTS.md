@@ -13,7 +13,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - The owner's real family tree is test data only. It lives in `local/myFamily.ts`.
 - `local/` is git-ignored. Never commit it, never copy it into `src/`, and never import it from app code. It must not reach GitHub, an EAS build or the app.
 - The tree a new install opens on is `src/data/sampleFamily.ts`. It is a small made-up family. Keep it made up. It includes an ended marriage with a child, so a new install shows how one looks.
-- Test against the real tree with `npm run check:local`. It skips itself when the file is missing.
+- Test against the real tree with `npm run check:local`. It checks `local/myFamily.ts` and every app export file in `local/` (`*.json`, each tree in it), and skips itself when there are none. To check the owner's current tree, ask for an export from the app (Menu → Export) and put it in `local/`.
 - Photos and names of real people never go into tracked files, fixtures or commit messages.
 
 ## Export (JSON and PDF)
@@ -39,7 +39,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - A spouse who has their own parents in the tree stays under their own parents.
 - One empty card-width cell between the children of one couple and the children of another couple (cousins), on every row below. Half-siblings (children of the same person from different marriages) stay together with no gap.
 - No reserved space for someone's descendants. Branches are packed row by row: a childless person sits right beside a sibling, even if that sibling's many children spread out underneath them.
-- Separate founding families (for example one headed by one founder couple and one by another) keep at least 3 empty card-widths between them where they come closest, on every row (`ROOT_FAMILY_GAP`).
+- Separate founding families (for example one headed by one founder couple and one by another) keep at least 3 empty card-widths between them where they come closest, on every row (`ROOT_FAMILY_GAP`), and also between neighboring rows: a family's edge card is never closer than that to the other family's edge card one row up or down (the owner's rule; one sat diagonally only 2 cells away). `packShapes` checks the rows above and below, and `check:families` / `check:local` test it ("separate families too close across rows").
 - **Nothing ever crosses a card.** No line may pass through any card except the cards it connects. Fix a crossing by moving cards, never by bending a line.
 - Lines are always straight. A spouse's line goes straight down from their card to the marriage bar, the bar runs straight across, and a child's line is one straight line from the ⊕ to the top of the child's card (`makeUnionRouter` in src/layout/routes.ts, shared by the canvas, minimap and PDF). The one exception is children born together (below).
 - A spouse on a higher row than their marriage bar has a line running down through the rows in between; the cells right under them on those rows stay empty (`dropUntil`). The couple moves together to find such a column. A kept-empty cell is a single hole: other cards may sit right beside it on both sides, and no family gap is kept around it, so it costs as little space as possible.
@@ -49,8 +49,9 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## One-person tree view
 
-- No extra gap between separate families there: the person's father's and mother's sides are one family, so they keep only the normal one-cell gap (`rootFamilyGap={FAMILY_GAP}` on TreeCanvas in PersonTreeView). The 3-cell gap is for the main tree only.
+- The one-person tree uses the same layout engine as the main tree, with no special rules of its own (the owner's decision, 2026-11-07). A version that mirrored families and dropped gaps to put the parents side by side was tried and removed as too complicated. The parents can sit apart: a child sits under their own parent, and the cousin rule keeps one empty cell between children of two different couples, even when those cousins married each other.
 - Brothers and sisters always share one row. When ancestor lines meet (cousins who married) and several children of one couple are kept, they all move to the lowest of their rows, with everyone below them (personTreeData).
+- It's fitted and centered by the same rules as the main tree (the owner's rule). The person whose tree it is starts selected (also after switching to someone else's tree), so everyone not connected to them is grayed out. Tapping someone twice switches to that person's tree.
 - `check:families` and `check:local` run every rule on one-person trees too.
 
 ## Card text
@@ -93,6 +94,10 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 - Two buttons side by side: "Show family tree" (the one-person view) and "Find relationship with…", which opens Find relationship with this person already chosen first. From the side menu, Find relationship still starts empty.
 
+## Find relationship
+
+- Each person box is itself a button: tapping it opens the name search for that slot (people tap the box). The empty box says «برای انتخاب ضربه بزنید» / "Tap to choose someone" (`noOneChosen`) and shows a small magnifier (`SearchIcon`). Beside each box is a small tree button (`TreeIcon`, drawn) that picks the person by tapping them on the tree. There are no "Search by name" / "Pick on tree" buttons under the boxes any more (the owner removed them). The search list also offers "Pick on tree".
+
 ## Minimap
 
 - The minimap steers the camera: tapping a spot centers the view there, and dragging on it moves the view along with the finger (one pan with no minimum distance in Minimap.tsx). The camera is set directly, never animated, and kept within `clampAxis`.
@@ -103,6 +108,40 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - If the tunnel fails with ERR_NGROK_108, Expo's shared ngrok account is full. Use the server's public IP instead: `REACT_NATIVE_PACKAGER_HOSTNAME=<public ip> npx expo start --go --lan`. Then give the owner `exp://<public ip>:8081`.
 - Tell the owner to scan from inside Expo Go, not with the phone camera. The camera opens an old KinBridge dev build, which is missing newer native modules such as expo-print.
 - Run the server in a pseudo-terminal (`script -qfc "..." <log>`) so the QR code prints, and paste the QR code to the owner.
+
+## Edit mode is a draft
+
+- In edit mode nothing is saved until the header's Save button. Every change (sheets, add, delete, ▲▼ arrows) goes into a draft in App.tsx (`tree.undo`, one step per change; `undo[0]` is the saved tree).
+- The header shows Undo (one step back) and Save (says Done when nothing changed).
+- Leaving edit mode with unsaved changes (Android back, opening the trees list, import, export, PDF) asks Save / Discard / Keep editing (`confirmUnsaved` in src/utils/alert.ts).
+- The person and marriage edit sheets ask before closing when anything changed and Save wasn't pressed. Cancel (after the warning) undoes everything done in that sheet since it opened: typed fields, and spouses, parents or children added or removed, child order and twins (`sheetBase` / `discardSheet` in App.tsx roll the draft back to where it was when the sheet opened). Save in the sheet keeps them in the draft.
+
+## Opening screen
+
+- When the app opens, `SplashIntro` shows the logo and one of ten sentences (`splashTagline1` to `splashTagline10`, picked at random on each launch) in the user's language for 2 seconds, then fades into the app. It waits for the saved language (`ready` from useI18n), so the sentence never shows in the wrong language.
+- Its background color (`SPLASH_BACKGROUND`) matches the native splash and adaptive icon color in app.json. Change all three together.
+- The logo is the owner's picture, `assets/logo-source.png` (a copper fingerprint tree on wine red). Every icon, the splash image and the favicon are built from it with `scripts/logo/fromPhoto.mjs`, never drawn by hand. The wine color is `#400C1F`.
+- After the opening screen, the app starts on the trees list (ProjectsSheet) so a tree can be picked. The very first launch shows the guide instead. Pop-ups wait for the opening screen to finish (`introDone`), or they'd cover it. The trees list and the guide are hidden whenever the opening screen is up, even when it plays again (e.g. a live reload while one is open; `onStart` sets `introDone` back to false).
+- Each tree in the trees list shows how many people it has, and how many men and women («۲۱ نفر - ۱۲ مرد - ۹ زن», `peopleCount` / `menCount` / `womenCount`, in the language's digits; `countMenWomen` in App.tsx). Placeholder spouses aren't counted; people with no gender set count only in the total.
+- Anywhere in the app or the PDF, numbers, dates and words in one line are joined by " - ", never "·", which reads as a zero (۰) in Persian. The open tree is marked only by its border; there is no "Open now" text. Trees that aren't open are read and counted each time the list opens.
+- Edit mode is entered only from the trees list: each tree has an Edit button that opens it in edit mode. The side menu has no edit mode row.
+- Picking a tree in the trees list (tapping it or its Edit button) plays the fly-to-title animation (`TreeFlight`): once the list has slid away, the tree's name flies from its row up into the header title in 0.6 seconds (`FLIGHT_MS`), and the title glows once on landing. It shows people where to choose a tree again. It plays every time, until the owner says otherwise. It never takes touches. Positions are measured on screen (`measureInWindow`), so RTL and safe areas need nothing special.
+
+## No development leftovers
+
+- Before every commit, remove everything that was only for development or testing. `npm run check:devLeftovers` (scripts/checkNoDevLeftovers.ts, part of `check:all`, so it runs before every commit and in the release pipeline) fails on:
+  - debug code in the app (App.tsx, index.ts, src/): `console.log` / `debug` / `info` / `trace`, `debugger`;
+  - imports of the Expo dev client, dev menu or dev launcher;
+  - dev-server addresses: `localhost`, `127.0.0.1`, `exp://`, `*.exp.direct`, ngrok, port 8081, raw `ip:port`;
+  - `__DEV__` set by hand, or test ads switched on any way but `const useTestAds = __DEV__ || process.env.EXPO_PUBLIC_ADS_TEST === '1'`;
+  - imports from `local/`;
+  - eas.json store profiles (`production*`) with `developmentClient`, internal distribution or `EXPO_PUBLIC_ADS_TEST`; preview profiles without `EXPO_PUBLIC_ADS_TEST=1`;
+  - the dev client in app.json;
+  - package.json `android`/`ios` scripts rewritten by `expo prebuild`;
+  - the release pipeline no longer running `npm uninstall --no-save expo-dev-client`;
+  - tracked `android/`, `ios/`, `local/`, `.expo/`, `.ssh-key`, `*.jks`, `*.keystore`, `*.p12`, `*.pk8`, `*.bin`, `*.log` or `.env` files.
+- Comments are ignored, so explaining a past dev-only problem in a comment is fine.
+- Fix a failure by removing the leftover, never by loosening the check or committing with `--no-verify`.
 
 # Part 2: rules in the code
 
@@ -146,7 +185,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `sampleFamily` loads only on a fresh install with exactly one project. Every other new tree starts as one "New person" (`starterTree` in App.tsx).
 - `applyMutation` (App.tsx) saves to `activeProjectRef.current`, not React state, so a save never lands in the wrong tree while switching. `openProject` clears selection and edit state and bumps `resetToken`.
 - The last tree can never be deleted. Deleting a tree asks first (`confirmDestructive`).
-- Tree names: `treeBaseName` («شجره‌نامه من» / "My family tree" / ...), then numbered one past the highest existing number, in any language and digit set (`nextTreeName`, using `phraseInEveryLanguage`). Duplicates get ` (2)`, ` (3)` (`uniqueName`).
+- Tree names: `treeBaseName` («تبارنامه من» / "My family tree" / ...; trees named «شجره‌نامه من» from before the rename still count), then numbered one past the highest existing number, in any language and digit set (`nextTreeName`, using `phraseInEveryLanguage`). Duplicates get ` (2)`, ` (3)` (`uniqueName`).
 - Export format: `{ kinbridgeExport: 2, exportedAt, trees: [{ name, people, marriages }], albumFiles }`. Import refuses anything else with `NOT_AN_EXPORT`, shown as `t('importNotExportFile')`. If the format changes, bump the version and keep reading version 2.
 - File names are the tree name without `\/:*?"<>|`, plus the ISO date (or `family-trees` for several trees), so a new export never overwrites an old one. The PDF uses the same pattern.
 - Import always adds each chosen tree as a new tree and never overwrites one.
@@ -165,8 +204,9 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `movePersonOneStep` and `resetRowOrder` are still exported and tested, but no screen uses them now. A row is either all automatic or all manual.
 - App.tsx handlers never read a new person back from `applyMutation`'s return value. It isn't reliable when updates are queued, and doing so crashed "add several children in a row".
 - The marriage edit sheet keeps only `editingMarriageId` and reads the marriage from `data`, never a stored copy.
-- Edit forms (MarriageEditSheet, PersonEditSheet) fill their fields from the saved data only when they open or switch to a different marriage or person (effect keyed on the id), never when the object changes while open. Adding or removing a child, spouse or parents saves at once and hands back a new object; keyed on the object, the form reset and lost unsaved picks (an ended marriage turned back to current).
+- Edit forms (MarriageEditSheet, PersonEditSheet) fill their fields from the saved data only when they open or switch to a different marriage or person (effect keyed on the id), never when the object changes while open. Adding or removing a child, spouse or parents changes the draft at once (until the sheet's Cancel rolls it back) and hands back a new object; keyed on the object, the form reset and lost unsaved picks (an ended marriage turned back to current).
 - Adding a person, spouse, parents or child never opens the new person's edit sheet by itself. Adding a child keeps the marriage sheet open.
+- In edit mode, adding someone (the + button, a spouse, parents, a child) moves the camera so the new card is in the middle of the screen (the middle of both, for parents). The zoom never changes, only the position (the owner's rule). TreeCanvas finds newcomers by comparing who's in the tree with the last render; a new `resetToken` (another tree opened, an import) or more than two newcomers doesn't move it. Never read the new person back from `applyMutation` for this.
 
 ## Layout
 
@@ -196,11 +236,11 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 ## Language and RTL
 
 - The app speaks 16 languages (src/i18n/locales.ts `LOCALES`): Persian, English, Arabic, German, French, Italian, Spanish, Portuguese, Russian, Turkish, Simplified Chinese, Korean, Japanese, Hindi, Indonesian, Urdu.
-- Where it opens: Bazaar in Persian; Galaxy Store in the phone's language if the app speaks it (expo-localization), else English (`defaultLocale`). A language the user picks is saved and wins after that.
+- Where it opens: Bazaar in Persian; Google Play in the phone's language if the app speaks it (expo-localization), else English (`defaultLocale`). A language the user picks is saved and wins after that.
 - RTL follows the language (`RTL_LOCALES`: Persian, Arabic, Urdu). `I18nManager.forceRTL` is deliberately not used.
 - Digits follow the language (`localDigits`): Persian ۰-۹ in Persian, Arabic ٠-٩ in Arabic, 0-9 otherwise. `toAsciiDigits` reads any of them back.
 - en.ts is the source of truth. Every other language file is typed `Record<StringKey, string>` and registered in `catalogs` (src/i18n/index.ts), so every new phrase goes into all 16 files or typecheck fails. A phrase missing at runtime falls back to English. Placeholders use `{name}` and must match English exactly.
-- RTL is done by hand: `row-reverse` rows, `writingDirection: 'rtl'` and right-aligned text, the side menu slides from the right, the +/↻ corners swap, and the Shamsi calendar puts Saturday on the right.
+- RTL is done by hand: `row-reverse` rows, `writingDirection: 'rtl'` and right-aligned text, the side menu slides from the right, the + button changes corner, and the Shamsi calendar puts Saturday on the right.
 - Shamsi dates are only for Persian. Every other language uses the Gregorian calendar, everywhere: screens, the date picker and the PDF. All of it goes through `calendarFor(locale)` (src/utils/calendar.ts): Persian is `۱۳۶۴/۲/۲۷` (Persian digits, no leading zeros); other languages use the phone's `Intl` date format with month and weekday names in that language, and English names if `Intl` can't give them. Never call `formatJalali` directly from a screen.
 - The language list (in the side menu, opening right there under its row, not as a second pop-up) names each language in its own script (`nativeName`), never translated. The Language row shows ▾ / ▴ (MenuRow `trailing`, its own Text), and the list sits in its own tinted box (`subList`, `theme.panel2`) so it stands apart from the menu.
 - Never put an emoji in the same `Text` as Persian. Android measures it too narrow and shows nothing. Draw the emoji in its own `Text` (SideMenu `MenuRow` icon, ThanksDialog).
@@ -219,13 +259,22 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - Canvas buttons (only the ▲▼ arrows now) are plain `Pressable`s, never SVG `onPress`, which throws under React 19 on web.
 - Pan and pinch run together and each applies a small change per frame: pan moves, pinch zooms around the focal point. Recomputing from a saved start made the camera slide sideways on every zoom.
 - The content transform bakes in translate, scale, translate back. Never rely on `transformOrigin` with a Reanimated transform. ZoomableView does the same.
-- Reset sets `.value` directly, never `withTiming` from the JS thread, which never landed on real phones. Letting go of a drag flings the tree with `withDecay`, started inside the pan gesture (UI thread), clamped to `axisBounds`; any new touch or pinch stops it (`stopGlide`).
-- Zoom range is `MIN_SCALE` 0.05 to `MAX_SCALE` 2.5.
+- Reset sets `.value` directly, never `withTiming` from the JS thread, which never landed on real phones.
+- Never read a camera value (`translateX`, `translateY`, `scale`) on the JS thread and write it back: a write from the JS thread lands on the UI thread later, so a read right after it gets the old value. The "pull the camera back in" effect did that right after the fit and wrote the starting 0 back, so every tree opened at its left edge (the main tree on its left cards, one-person trees pushed left). Read-modify-write runs in `runOnUI` (the clamp effect, centering on a new card); gestures and the minimap already run on the UI thread.
+- The cards sit in the exact middle of the content box (`offsetX`, `offsetY` in toCanvas): the layout's width and height each count one extra column and row past the last card, and that extra is split evenly between both sides. With it all on the right and bottom, the camera's limits gave more room to the right and below than to the left and above.
+- The camera's limits on the vertical axis leave extra room at the top equal to the minimap's height (`startReserve` in clampAxis: `topReserve` in TreeCanvas, `MINIMAP_RESERVE` in Minimap), so the top cards can be pulled out from under it.
+- The camera starts centered (`initialTranslateX`), so even the first frame, before the fit, shows the tree in the middle.
+- The tree moves only while a finger is on it. Letting go stops it at once: no fling, no `withDecay` glide (the owner's rule).
+- Zooming out stops when the whole tree fits on the screen, plus a little (`minScale`: 0.85 of the zoom where it just fits; never below `MIN_SCALE` 0.05). Zooming in stops at `MAX_SCALE` 2.5. The owner's rule: a small family shrank to a speck and people got lost; big families can still zoom out to see all of it. Pinch and the web wheel both use `minScale`.
 - A worklet ('worklet' function) must be defined below every worklet it calls in the same file (src/utils/camera.ts: `clamp`, then `axisBounds`, then `clampAxis`). Reanimated captures what a worklet calls when the file loads, and one defined later is still undefined then: the app failed to open with "undefined is not a function".
-- Fit-to-screen (first open and the ↻ button) fits by height only and leaves room for the minimap (`MINIMAP_RESERVE`); fitting by width made big trees unreadable. It centers on `focusPersonId` in the one-person view, and otherwise on the person at the very top of the tree, the one with the most descendants if several share that row (`topPersonId`).
-- `clampAxis` (src/utils/camera.ts) keeps the camera within `EDGE_SLACK` (0.4 of the screen) of the tree.
+- There is no ↻ (re-fit) button on the tree screen; the owner removed it. (Find relationship's chart keeps its own ↻.)
+- The search button sits where ↻ was: the bottom corner on the left in Persian (RTL), on the right in English, opposite the edit-mode + button, the same round button, with a drawn magnifier (no glyph). It opens PersonPicker titled "Find a person" (`findPerson`), keyboard open; picking someone selects them and moves the camera onto their card (`centerOnPeople`, zoom unchanged), in the main tree and the one-person tree, and their card pulses for about 2 seconds (`Spotlight`: a ring in the selection color growing out and fading, three times; React Native's own Animated, no new dependency). Placeholder spouses aren't listed.
+- Fit-to-screen: a tree narrower than the screen at the fitted zoom is centered as a whole (main tree and one-person tree), measured from the cards' real edges (positions are card centers). A wider one centers on the top person (`topPersonId`), in both, but never leaves more than a 16px margin of empty screen at either edge.
+- Fit-to-screen (first open, and every `resetToken`: opening a tree, an import) fits by height only and leaves room for the minimap (`MINIMAP_RESERVE`); fitting by width made big trees unreadable. It centers on the person at the very top of the tree, the one with the most descendants if several share that row (`topPersonId`), in the main tree and the one-person tree alike.
+- `clampAxis` (src/utils/camera.ts) keeps the camera near the tree: at most `EDGE_SLACK` (0.4 of the screen) past its edge, and never more than `EDGE_SLACK_OF_TREE` (0.25) of the tree's own size on screen, so a small family can't be dragged far into empty space (the owner's rule). Big trees keep the full 0.4.
 - On web, the wheel zooms around the cursor and `userSelect: 'none'` stops drags from selecting text.
 - The gesture binds to a full-screen View, not the content box.
+- Native right-to-left layout stays off. The whole app does RTL by hand (row-reverse, writingDirection, mirrorX, the camera math assuming the content box starts at the left edge), so native RTL would flip everything a second time. The owner checked the Bazaar build on a phone set to Persian (2026-11-07) and it already lays out left to right; app.json still says `supportsRTL: false` (expo-localization plugin and `extra`) to keep it that way, and TreeCanvas's outer View is `direction: 'ltr'`. Never turn native RTL on without redoing all of that.
 - A card takes two taps: the first selects it, the second opens PersonSheet (view mode) or PersonEditSheet (edit mode). A ⊕ in edit mode also takes two taps; in view mode one tap opens MarriageSheet. While `pickPrompt` is set, the next card tap goes to it.
 - When a card is selected, lines not connected to that person dim to `theme.stroke`.
 - Marriages are drawn in `unionsInDrawOrder`: grayed ones first and the selected person's own after them, then deeper bars first. Someone with several marriages has one drop per marriage from the same point under their card, so the drops overlap; in any other order, a grayed line covered a highlighted one (one wife's line stopped where another's ran over it). The PDF draws deeper bars first too.
@@ -243,8 +292,9 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - A Modal that contains gestures needs its own `GestureHandlerRootView`, because on Android a Modal is outside the app root.
 - Side menu:
   - It slides with a plain `translateX` shared value, not a Reanimated `entering` animation, which captured a half-height Modal. The panel is pinned with `top: 0, bottom: 0`, not `height: '100%'`.
-  - Actions that change the screen or open something (edit mode, help, person tree, find relationship, import, export, PDF) close the menu first with `closeThen`, so two Modals never stack. Language, theme, minimap, card style and ribbon leave it open.
+  - Actions that change the screen or open something (help, person tree, find relationship, import, export, PDF) close the menu first with `closeThen`, so two Modals never stack. Language, theme, minimap, card style and ribbon leave it open.
   - It lists only what the wide header shows; no license, equipment or subscription pages.
+  - Export and PDF say what they're for, in brackets: «Export (for sharing)», «Export as PDF (for printing)» (`forSharing`, `forPrinting`), in every language.
 - The header's menu button is three drawn bars, not a ☰ character, which some Android fonts lack. The tree title opens ProjectsSheet. A "Done" badge is the only sign of edit mode.
 - PersonSheet and MarriageSheet are read-only. Editing happens only in edit mode.
 - Onboarding shows once on first launch (`ONBOARDING_SEEN_KEY`) and can be reopened from Help.
@@ -276,7 +326,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Release and signing
 
-- The Android package is `com.pouya_kinbridge.shajarehnameh` and the app name is «شجره نامه». Never change the package name.
+- The Android package is `com.pouya_kinbridge.shajarehnameh` and the app name is «تبارنامه» (it was «شجره نامه»; the package name keeps the old spelling). Never change the package name.
 - eas.json uses `appVersionSource: "local"` with production `autoIncrement`, so `android.versionCode` in app.json is the source of truth.
 - Cafe Bazaar takes a signed `.bin` made with `bundlesigner genbin` from the `.aab` (bazaar-release/README.md). Always sign with the same `.ssh-key` (project root, git-ignored) and the tracked `bazaar-release/cert.pem`. Never regenerate the certificate: Bazaar compares it byte for byte. Use `--v2-signing-enabled true --v3-signing-enabled false` with the key as PKCS#8 DER.
 - `.gitignore` ignores `*.pem` but keeps `!/bazaar-release/cert.pem`, and that line must stay after `*.pem`. `/bazaar-release/*.bin`, `.ssh-key`, `/android`, `/ios` and `/local/` stay ignored.
@@ -286,19 +336,22 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Store versions
 
-- One codebase, two store versions, picked at build time by `EXPO_PUBLIC_APP_VARIANT` (app.config.js, src/config/variant.ts): `bazaar` (default) is «شجره نامه» and opens in Persian; `galaxy` is "Family Tree" and opens in the phone's language or English. Same package name, signing key and everything else.
-- eas.json: `preview` / `production` are Bazaar; `preview-galaxy` / `production-galaxy` are Galaxy Store.
-- A fresh Galaxy install opens on `sampleFamilyEnglish` (made-up English names, same shape as the Persian sample); Bazaar on `sampleFamily`. Both are checked by `check:families`.
-- To look at the Galaxy version in Expo Go: `EXPO_PUBLIC_APP_VARIANT=galaxy npx expo start --tunnel --go`.
+- One codebase, two store versions, picked at build time by `EXPO_PUBLIC_APP_VARIANT` (app.config.js, src/config/variant.ts): `bazaar` (default) is «تبارنامه» and opens in Persian; `play` (Google Play) is "Kin Bridge" (two words, `PLAY_APP_NAME`) and opens in the phone's language or English. Same package name, signing key and everything else. There is no Galaxy Store version any more (the owner replaced it with Google Play).
+- The Play version shows "Kin Bridge" as its title inside the app (the side menu) in every language; Bazaar's title follows the language (`t('appTitle')`).
+- eas.json: `preview` / `production` are Bazaar; `preview-play` / `production-play` are Google Play.
+- A fresh Play install opens on `sampleFamilyEnglish` (made-up English names, same shape as the Persian sample); Bazaar on `sampleFamily`. Both are checked by `check:families`.
+- To look at the Play version in Expo Go: `EXPO_PUBLIC_APP_VARIANT=play npx expo start --tunnel --go`.
+- Google Play App Signing must use our own key: upload the Bazaar key as the app signing key (Google's PEPK tool), never let Google make one. Otherwise Play and Bazaar builds have different signatures, a user switching stores must uninstall first, and that deletes their trees (they live only on the phone).
 
 ## Builds
 
 - `.github/workflows/release-builds.yml` runs on every push to `main` and by hand (workflow_dispatch). After `npm run check:all` it builds three files, entirely on GitHub's runner with no Expo or other outside build service (`npx expo prebuild`, then Gradle). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
   - `kinbridge-phone`: the Bazaar version with test ads (`EXPO_PUBLIC_ADS_TEST=1`), arm64 only, for the owner's own phone.
   - `kinbridge-bazaar`: for the Cafe Bazaar console, both the release app bundle (`kinbridge-bazaar.aab`, signed with `jarsigner` using a keystore made on the spot from the key and `cert.pem`, after stripping Gradle's debug signature) and Bazaar's signed digest of it (`kinbridge-bazaar.bin`, made with Bazaar's bundle-signer `genbin`).
-  - `kinbridge-galaxy`: the Galaxy Store release APK, every chip type.
+  - `kinbridge-play`: for the Google Play console, the release app bundle (`kinbridge-play.aab`), signed with the same key the same way as Bazaar's (no .bin; that's Bazaar only).
 - Expo (EAS) builds use the same Bazaar key: it's the default Android keystore in the project's EAS credentials (alias `bazaar`, SHA-256 `99:B3:11:22…`). Expo's earlier generated key is still listed there but not used.
-- One signing identity for all three: the Bazaar key. The repository secret `BAZAAR_SIGNING_KEY` holds the private key (the PEM text of `.ssh-key`), and `bazaar-release/cert.pem` is its certificate; the pipeline checks they match and fails clearly if the secret is missing. So the phone APK installs as an update over the Bazaar install, and the Galaxy app has the same identity. Never sign with any other key.
+- One signing identity for all three files: the Bazaar key. The repository secret `BAZAAR_SIGNING_KEY` holds the private key (the PEM text of `.ssh-key`), and `bazaar-release/cert.pem` is its certificate; the pipeline checks they match and fails clearly if the secret is missing. So the phone APK installs as an update over the Bazaar install, and the Play app has the same identity. Never sign with any other key.
+- Each build lists every phone permission it asks for on the run's summary page ("List the phone permissions" step), read from Android's final merged manifest after the build, with a plain-English meaning for the known ones. A permission the list doesn't know shows as "New: check what needs it". Add a meaning there when a new one is expected, and remember Bazaar rejects camera, microphone and draw-over-other-apps permissions.
 - The pipeline sets the version code to 100 plus the run number (`ANDROID_VERSION_CODE`, read by app.config.js), so every build is newer than the last upload. Other builds keep app.json's.
 - `expo prebuild` rewrites the `android`/`ios` scripts in package.json; don't commit that (the owner runs the app through Expo Go).
 - Cloud builds on EAS: `npx eas build --profile preview --platform android`. The preview profile must keep `EXPO_PUBLIC_ADS_TEST=1` (see Ads).
@@ -317,5 +370,6 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 - `check:jalali`: Shamsi conversion, Gregorian calendars for other languages, and marriage-year conversion.
 - `check:i18n`: every language file has every phrase, nothing empty, the same {placeholders} as English, and new-person numbering that carries on across languages.
 - `check:launchAd`: the four launch-ad paths.
+- `check:devLeftovers`: nothing from development left in what's committed and built (see "No development leftovers").
 
 Test fixtures live in `scripts/fixtures/richFamily.ts` (made-up English names). Keep them separate from `src/data/sampleFamily.ts`.

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +22,7 @@ import {
   type Project,
   type ProjectIndex,
 } from './src/storage/storage';
-import { showAlert, confirmDestructive } from './src/utils/alert';
+import { showAlert, confirmDestructive, confirmUnsaved } from './src/utils/alert';
 import {
   addChild,
   addExistingChild,
@@ -56,6 +56,8 @@ import { PersonTreeView } from './src/components/PersonTreeView';
 import { ProjectsSheet } from './src/components/ProjectsSheet';
 import { TreeChooserSheet } from './src/components/TreeChooserSheet';
 import { ThanksDialog } from './src/components/ThanksDialog';
+import { SplashIntro } from './src/components/SplashIntro';
+import { TreeFlight, type Flight, type Rect } from './src/components/TreeFlight';
 import { exportTreePdf } from './src/export/pdf';
 import { findRelationshipRoutes, type PathStep } from './src/model/relationship';
 import { ThemeProvider, themes, useTheme, type Theme } from './src/theme';
@@ -82,12 +84,16 @@ const RIBBON_KEY = 'kinbridge:showRibbon:v1';
  */
 
 export default function App() {
+  // Pop-ups wait for the opening screen to finish, or they'd cover it.
+  const [introDone, setIntroDone] = useState(false);
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
           <I18nProvider>
-            <Root />
+            <Root introDone={introDone} />
+            {/* The two-second opening screen, drawn over the app while it loads. */}
+            <SplashIntro onStart={() => setIntroDone(false)} onFinish={() => setIntroDone(true)} />
           </I18nProvider>
         </ThemeProvider>
       </SafeAreaProvider>
@@ -95,24 +101,88 @@ export default function App() {
   );
 }
 
-function Root() {
+/**
+ * How many people a tree has, and how many of them are men and women.
+ * Placeholder spouses aren't counted at all; people with no gender set count
+ * only in the total.
+ */
+function countMenWomen(d: FamilyData) {
+  let total = 0;
+  let men = 0;
+  let women = 0;
+  for (const p of d.people) {
+    if (p.unknown) continue;
+    total++;
+    if (p.gender === 'male') men++;
+    else if (p.gender === 'female') women++;
+  }
+  return { total, men, women };
+}
+
+function Root({ introDone }: { introDone: boolean }) {
   const insets = useSafeAreaInsets();
   const { t, isRTL, locale, setLocale } = useI18n();
   const { theme, mode, toggleMode } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const [data, setData] = useState<FamilyData | null>(null);
+  // The open tree. In edit mode it's a draft: nothing is saved until Save,
+  // and `undo` holds every earlier version since edit mode began (undo[0]
+  // is the saved tree), so Undo steps back and Discard returns to undo[0].
+  // Outside edit mode `undo` is always empty and every change saves at once.
+  const [editMode, setEditMode] = useState(false);
+  const [tree, setTree] = useState<{ data: FamilyData; undo: FamilyData[] } | null>(null);
+  const data = tree?.data ?? null;
+  const setData = (next: FamilyData) => setTree({ data: next, undo: [] });
+  const hasUnsavedEdits = (tree?.undo.length ?? 0) > 0;
+  // The tree as of right now, for actions that run straight after Save or
+  // Discard in the same tap (the PDF), before React has drawn the new state.
+  const latestDataRef = useRef<FamilyData | null>(null);
+  latestDataRef.current = data;
+  // Android's back button in edit mode leaves it the same way the menu does,
+  // asking first about unsaved edits. (Open sheets handle back themselves.)
+  const leaveEditModeRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!editMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      leaveEditModeRef.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, [editMode]);
   // Every family tree ("project") in the app, and which one is open. The ref
   // is what saves read, so a save never lands in the wrong tree even while
   // one is being switched out for another.
   const [projectIndex, setProjectIndex] = useState<ProjectIndex | null>(null);
   const activeProjectRef = useRef<string | null>(null);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  // Men and women in each tree that isn't open, counted when the trees list
+  // opens (the open tree is counted live from `data`).
+  const [otherTreeStats, setOtherTreeStats] = useState<Record<string, { total: number; men: number; women: number }>>({});
+  useEffect(() => {
+    if (!projectsOpen || !projectIndex) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, { total: number; men: number; women: number }> = {};
+      for (const p of projectIndex.projects) {
+        if (p.id === projectIndex.activeId) continue;
+        const d = await loadFamilyData(p.id).catch(() => null);
+        if (d) next[p.id] = countMenWomen(d);
+      }
+      if (!cancelled) setOtherTreeStats(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectsOpen]);
+  // A picked tree's name flying up into the header title (TreeFlight).
+  const [flight, setFlight] = useState<Flight | null>(null);
+  const screenRef = useRef<View>(null);
+  const titleRef = useRef<Text>(null);
   // Export and import each ask which trees first; importFile is the picked file while its trees are being chosen.
   const [exportChooserOpen, setExportChooserOpen] = useState(false);
   const [importFile, setImportFile] = useState<ImportFile | null>(null);
   // On by default; only an explicit "off" is ever stored.
   const [showRibbon, setShowRibbon] = useState(true);
-  const [editMode, setEditMode] = useState(false);
 
   // View mode
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
@@ -126,6 +196,23 @@ function Root() {
   // it's always exactly what's actually in the tree, with no separate copy
   // that can drift out of sync.
   const [editingMarriageId, setEditingMarriageId] = useState<ID | null>(null);
+  // How far the draft's history had got when the open edit sheet opened.
+  // Cancel in that sheet rolls the tree back to here, so a spouse, parents
+  // or a child added from the sheet go away too, not only typed fields.
+  const sheetBase = useRef(0);
+  const openSheetKey = editingPerson ? `person:${editingPerson.id}` : editingMarriageId ? `marriage:${editingMarriageId}` : null;
+  useEffect(() => {
+    if (openSheetKey) sheetBase.current = tree?.undo.length ?? 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSheetKey]);
+  const sheetChangedTree = openSheetKey != null && (tree?.undo.length ?? 0) > sheetBase.current;
+  /** Cancel in an edit sheet: back to the tree as it was when the sheet opened, and close it. */
+  const discardSheet = () => {
+    const base = sheetBase.current;
+    setTree((prev) => (prev && prev.undo.length > base ? { data: prev.undo[base], undo: prev.undo.slice(0, base) } : prev));
+    setEditingPerson(null);
+    setEditingMarriageId(null);
+  };
 
   const [resetToken, setResetToken] = useState(0);
 
@@ -153,12 +240,12 @@ function Root() {
     formatNumber: (n) => localDigits(n, locale),
     knownLabels: phraseInEveryLanguage('newPersonLabel'),
   };
-  // The first tree is «شجره‌نامه من» ("My family tree"); each new one adds
-  // the next number, «شجره‌نامه من ۲», «شجره‌نامه من ۳», ... one past the
+  // The first tree is «تبارنامه من» ("My family tree"); each new one adds
+  // the next number, «تبارنامه من ۲», «تبارنامه من ۳», ... one past the
   // highest any tree already has (the unnumbered one counts as 1), in any
   // language and digits, so a number is never handed out twice.
   const nextTreeName = (projects: Project[]) => {
-    const bases = [...phraseInEveryLanguage('treeBaseName'), 'شجره نامه من'].map((b) => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const bases = [...phraseInEveryLanguage('treeBaseName'), 'شجره نامه من', 'شجره‌نامه من'].map((b) => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     const pattern = new RegExp(`^(?:${bases.join('|')})(?: (${ANY_DIGITS}+))?$`);
     let max = 0;
     for (const p of projects) {
@@ -186,8 +273,8 @@ function Root() {
       setProjectIndex(index);
       const saved = await loadFamilyData(index.activeId);
       // Only the very first tree on a fresh install starts from the sample family.
-      // A fresh install opens on the sample family: Persian for Bazaar, English for Galaxy Store.
-      setData(saved ?? (index.projects.length === 1 ? (APP_VARIANT === 'galaxy' ? sampleFamilyEnglish : sampleFamily) : starterTree()));
+      // A fresh install opens on the sample family: Persian for Bazaar, English for Google Play.
+      setData(saved ?? (index.projects.length === 1 ? (APP_VARIANT === 'play' ? sampleFamilyEnglish : sampleFamily) : starterTree()));
       try {
         // Photos from every tree share one folder, so all of them count.
         const all = await Promise.all(index.projects.map((p) => loadFamilyData(p.id)));
@@ -204,11 +291,23 @@ function Root() {
   // (see ONBOARDING_SEEN_KEY below). A brand new install has no
   // family-data save yet either, so this piggybacks on that same "have we
   // ever run before" signal rather than needing its own separate check.
+  const [firstRun, setFirstRun] = useState<boolean | null>(null);
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDING_SEEN_KEY).then((seen) => {
-      if (!seen) setOnboardingVisible(true);
-    });
+    AsyncStorage.getItem(ONBOARDING_SEEN_KEY)
+      .then((seen) => setFirstRun(!seen))
+      .catch(() => setFirstRun(false));
   }, []);
+
+  // Once the opening screen is gone, the app starts on the trees list so a
+  // tree can be picked. The very first launch shows the guide instead (there
+  // is only the sample tree then).
+  const launchHandled = useRef(false);
+  useEffect(() => {
+    if (launchHandled.current || !introDone || firstRun === null || !data || !projectIndex) return;
+    launchHandled.current = true;
+    if (firstRun) setOnboardingVisible(true);
+    else setProjectsOpen(true);
+  }, [introDone, firstRun, data, projectIndex]);
 
   useEffect(() => {
     AsyncStorage.getItem(MINIMAP_KEY).then((v) => {
@@ -273,6 +372,25 @@ function Root() {
     setResetToken((v) => v + 1);
   };
 
+  /**
+   * After a pick in the trees list: once the list has slid away, the tree's
+   * name flies from its row up to the header title, so people see where to
+   * choose a tree again. Positions are measured on screen, so RTL and the
+   * safe areas need nothing special.
+   */
+  const flyToTitle = (projectId: string, from: Rect | undefined) => {
+    const name = projectIndex.projects.find((p) => p.id === projectId)?.name;
+    if (!from || !name) return;
+    setTimeout(() => {
+      screenRef.current?.measureInWindow((sx, sy) => {
+        titleRef.current?.measureInWindow((x, y, width, height) => {
+          if (width <= 0) return;
+          setFlight({ id: Date.now(), name, from: { ...from, x: from.x - sx, y: from.y - sy }, to: { x: x - sx, y: y - sy, width, height } });
+        });
+      });
+    }, 280);
+  };
+
   /** A tree's name: the next numbered default when left empty, and never one already taken ("… (2)"). */
   const uniqueName = (name: string, projects: Project[]) => {
     const base = name.trim() || nextTreeName(projects);
@@ -321,27 +439,93 @@ function Root() {
 
   const editingMarriage = editingMarriageId != null ? data.marriages.find((m) => m.id === editingMarriageId) ?? null : null;
 
-  /** Applies a pure mutation to `data`, persists it, and returns whatever the mutator handed back (e.g. a newly-created person). */
+  /**
+   * Applies a pure mutation to `data` and returns whatever the mutator handed
+   * back. In edit mode it only changes the draft (one Undo step); otherwise
+   * it saves straight away.
+   */
   function applyMutation<T>(mutator: (d: FamilyData) => { data: FamilyData; result: T }): T {
     let result!: T;
     let nextData: FamilyData | undefined;
-    setData((prev) => {
+    const drafting = editMode;
+    setTree((prev) => {
       if (!prev) return prev;
-      const out = mutator(prev);
+      const out = mutator(prev.data);
       result = out.result;
       nextData = out.data;
-      return out.data;
+      if (out.data === prev.data) return prev;
+      return { data: out.data, undo: drafting ? [...prev.undo, prev.data] : [] };
     });
     const projectId = activeProjectRef.current;
-    if (nextData && projectId) saveFamilyData(projectId, nextData).catch((err) => showAlert(t('saveFailed'), String(err)));
+    if (!drafting && nextData && projectId) saveFamilyData(projectId, nextData).catch((err) => showAlert(t('saveFailed'), String(err)));
     return result;
   }
+
+  /** Forgets anything selected or open for editing, which may not exist in the tree any more after Undo or Discard. */
+  const clearSelection = () => {
+    setSelectedPerson(null);
+    setSelectedMarriage(null);
+    setEditingPerson(null);
+    setEditingMarriageId(null);
+  };
+
+  /** Save: writes the draft to the tree's storage and leaves edit mode. */
+  const saveEdits = () => {
+    const projectId = activeProjectRef.current;
+    if (hasUnsavedEdits && projectId) saveFamilyData(projectId, data).catch((err) => showAlert(t('saveFailed'), String(err)));
+    setTree({ data, undo: [] });
+    setEditMode(false);
+  };
+
+  /** Throws the draft away: back to the saved tree, out of edit mode. */
+  const discardEdits = () => {
+    if (tree && tree.undo.length > 0) {
+      latestDataRef.current = tree.undo[0];
+      setTree({ data: tree.undo[0], undo: [] });
+    }
+    clearSelection();
+    setEditMode(false);
+  };
+
+  /** Undo: one step back in the draft. */
+  const undoEdit = () => {
+    setTree((prev) => (prev && prev.undo.length > 0 ? { data: prev.undo[prev.undo.length - 1], undo: prev.undo.slice(0, -1) } : prev));
+    clearSelection();
+  };
+
+  /**
+   * Leaves edit mode, then runs `then`. With unsaved edits it asks first:
+   * Save, Discard, or Keep editing (which stays in edit mode and skips `then`).
+   */
+  const leaveEditMode = (then?: () => void) => {
+    if (!editMode || !hasUnsavedEdits) {
+      setEditMode(false);
+      then?.();
+      return;
+    }
+    confirmUnsaved(
+      t('unsavedTitle'),
+      t('unsavedMessage'),
+      { save: t('save'), discard: t('discard'), keepEditing: t('keepEditing') },
+      () => {
+        saveEdits();
+        then?.();
+      },
+      () => {
+        discardEdits();
+        then?.();
+      }
+    );
+  };
+  leaveEditModeRef.current = () => leaveEditMode();
+  /** Runs `action` right away outside edit mode; in edit mode, leaves it first (asking about unsaved edits). */
+  const outsideEditMode = (action: () => void) => (editMode ? leaveEditMode(action) : action());
 
   // The open tree as a printable PDF: the tree itself, then everyone in a
   // table. Always in the light theme's colors, since it's meant for paper.
   const handleExportPdf = async () => {
     try {
-      await exportTreePdf(data, {
+      await exportTreePdf(latestDataRef.current ?? data, {
         treeName: activeProject.name,
         isRTL,
         locale,
@@ -481,7 +665,7 @@ function Root() {
     // Padded on every edge, not just the top — Android draws edge-to-edge,
     // so without the bottom/side insets the tree and its hint bar sat under
     // the back/home bar (and, in landscape, under the side navigation bar).
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
+    <View ref={screenRef} style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
       <View style={[styles.header, isRTL && styles.headerRTL]}>
         <Pressable
           style={({ pressed }) => [styles.menuButton, pressed && styles.menuButtonPressed]}
@@ -496,18 +680,28 @@ function Root() {
         </Pressable>
         {/* The open tree's name; tap it to switch trees. Pushed to the far
             side of the bar from the ☰ button, so the two never sit together. */}
-        <Pressable style={({ pressed }) => [styles.titleButton, isRTL && styles.headerRTL, pressed && styles.menuButtonPressed]} onPress={() => setProjectsOpen(true)}>
-          <Text style={[styles.title, isRTL && styles.rtlText]} numberOfLines={1}>
+        <Pressable style={({ pressed }) => [styles.titleButton, isRTL && styles.headerRTL, pressed && styles.menuButtonPressed]} onPress={() => outsideEditMode(() => setProjectsOpen(true))}>
+          <Text ref={titleRef} style={[styles.title, isRTL && styles.rtlText]} numberOfLines={1}>
             {activeProject.name}
           </Text>
           <Text style={styles.titleChevron}>▾</Text>
         </Pressable>
-        {/* Every button now lives in the side menu, so this is the only
-            on-screen sign that edit mode is on. Tapping it turns it off. */}
+        {/* Edit mode's own buttons. Edits are a draft until Save; Undo steps
+            back one change. With nothing changed, the button says Done. */}
         {editMode && (
-          <Pressable style={({ pressed }) => [styles.editBadge, pressed && styles.menuButtonPressed]} onPress={() => setEditMode(false)}>
-            <Text style={[styles.editBadgeText, isRTL && styles.rtlText]}>{t('done')}</Text>
-          </Pressable>
+          <View style={[styles.editActions, isRTL && styles.headerRTL]}>
+            <Pressable
+              style={({ pressed }) => [styles.undoButton, !hasUnsavedEdits && styles.buttonDisabled, pressed && styles.menuButtonPressed]}
+              disabled={!hasUnsavedEdits}
+              onPress={undoEdit}
+              hitSlop={6}
+            >
+              <Text style={[styles.undoButtonText, isRTL && styles.rtlText]}>{t('undo')}</Text>
+            </Pressable>
+            <Pressable style={({ pressed }) => [styles.editBadge, pressed && styles.menuButtonPressed]} onPress={saveEdits} hitSlop={6}>
+              <Text style={[styles.editBadgeText, isRTL && styles.rtlText]}>{hasUnsavedEdits ? t('save') : t('done')}</Text>
+            </Pressable>
+          </View>
         )}
       </View>
 
@@ -584,6 +778,8 @@ function Root() {
         marriages={data.marriages}
         visible={editingPerson != null}
         onClose={() => setEditingPerson(null)}
+        treeChanged={sheetChangedTree}
+        onDiscard={discardSheet}
         onSave={(patch) => editingPerson && handleSavePerson(editingPerson.id, patch)}
         onDelete={() => editingPerson && handleDeletePerson(editingPerson)}
         onAddSpouse={() => editingPerson && handleAddSpouse(editingPerson.id)}
@@ -604,6 +800,8 @@ function Root() {
         visible={editingMarriage != null}
         canDelete={editingMarriage != null && canDeleteMarriage(data, editingMarriage.id)}
         onClose={() => setEditingMarriageId(null)}
+        treeChanged={sheetChangedTree}
+        onDiscard={discardSheet}
         onSave={(patch) => editingMarriage && handleSaveMarriage(editingMarriage.id, patch)}
         onDelete={() => editingMarriage && handleDeleteMarriage(editingMarriage.id)}
         onAddChild={() => editingMarriage && handleAddChild(editingMarriage.id)}
@@ -617,7 +815,10 @@ function Root() {
         }
       />
 
-      <OnboardingSheet visible={onboardingVisible} onClose={dismissOnboarding} />
+      {/* Pop-ups never show while the opening screen is up (introDone). */}
+      <OnboardingSheet visible={onboardingVisible && introDone} onClose={dismissOnboarding} />
+
+      <TreeFlight flight={flight} onDone={() => setFlight(null)} />
 
       <TreeChooserSheet
         visible={exportChooserOpen}
@@ -626,7 +827,7 @@ function Root() {
         items={projectIndex.projects.map((p) => ({
           key: p.id,
           name: p.name,
-          detail: p.id === projectIndex.activeId ? `${t('currentTree')} · ${t('peopleCount', { count: data.people.length })}` : undefined,
+          detail: p.id === projectIndex.activeId ? `${t('currentTree')} - ${t('peopleCount', { count: localDigits(data.people.length, locale) })}` : undefined,
         }))}
         initiallySelected={[projectIndex.activeId]}
         actionLabel={(count) => t('exportN', { count })}
@@ -648,14 +849,22 @@ function Root() {
         onClose={() => setImportFile(null)}
       />
       <ProjectsSheet
-        visible={projectsOpen}
+        visible={projectsOpen && introDone}
         projects={projectIndex.projects}
         activeId={projectIndex.activeId}
-        activePeopleCount={data.people.length}
+        stats={{ ...otherTreeStats, [projectIndex.activeId]: countMenWomen(data) }}
         defaultNewName={nextTreeName(projectIndex.projects)}
-        onOpen={(projectId) => {
+        onOpen={(projectId, from) => {
           setProjectsOpen(false);
           if (projectId !== projectIndex.activeId) openProject(projectId, projectIndex);
+          flyToTitle(projectId, from);
+        }}
+        onEdit={(projectId, from) => {
+          // The only way into edit mode: each tree's Edit button.
+          setProjectsOpen(false);
+          if (projectId !== projectIndex.activeId) openProject(projectId, projectIndex);
+          setEditMode(true);
+          flyToTitle(projectId, from);
         }}
         onCreate={(name) => {
           setProjectsOpen(false);
@@ -717,8 +926,6 @@ function Root() {
       <SideMenu
         visible={menuVisible}
         onClose={() => setMenuVisible(false)}
-        editMode={editMode}
-        onToggleEditMode={() => setEditMode((v) => !v)}
         onSetLocale={setLocale}
         onToggleTheme={toggleMode}
         showMinimap={showMinimap}
@@ -735,9 +942,9 @@ function Root() {
           setRelationshipIds({ first: null, second: null });
           setRelationshipOpen(true);
         }}
-        onImport={handleImport}
-        onExport={handleExport}
-        onExportPdf={handleExportPdf}
+        onImport={() => outsideEditMode(handleImport)}
+        onExport={() => outsideEditMode(handleExport)}
+        onExportPdf={() => outsideEditMode(handleExportPdf)}
       />
 
       <ThanksDialog visible={thanksVisible} onClose={() => setThanksVisible(false)} />
@@ -787,5 +994,15 @@ function createStyles(theme: Theme) {
     paddingVertical: 6,
   },
   editBadgeText: { color: theme.bg, fontSize: 12, fontWeight: '700' },
+  editActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  undoButton: {
+    borderColor: theme.lineMarriage,
+    borderWidth: 1.5,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+  },
+  undoButtonText: { color: theme.lineMarriage, fontSize: 12, fontWeight: '700' },
+  buttonDisabled: { opacity: 0.35 },
   });
 }

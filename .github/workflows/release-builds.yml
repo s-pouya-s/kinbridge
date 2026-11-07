@@ -8,8 +8,11 @@
 #                        bundle (kinbridge-bazaar.aab) and Bazaar's signed
 #                        digest of it (kinbridge-bazaar.bin), made with
 #                        Bazaar's own bundle-signer (see bazaar-release/README.md).
-#   kinbridge-galaxy     the Galaxy Store release APK ("Family Tree", opens in
-#                        the phone's language or English), every chip type.
+#   kinbridge-play       for the Google Play console: the signed release app
+#                        bundle (kinbridge-play.aab), "Kin Bridge", opens in
+#                        the phone's language or English. Signed with the same
+#                        key; in Play App Signing, upload this key as the app
+#                        signing key so Play's builds match Bazaar's.
 #
 # Every file is signed with the one Bazaar signing key, so each installs as
 # an update over the others' installs: the repository secret
@@ -61,10 +64,10 @@ jobs:
             variant: bazaar
             ads_test: ''
             gradle: bundleRelease
-          - target: galaxy
-            variant: galaxy
+          - target: play
+            variant: play
             ads_test: ''
-            gradle: assembleRelease
+            gradle: bundleRelease
     env:
       EXPO_PUBLIC_APP_VARIANT: ${{ matrix.variant }}
       EXPO_PUBLIC_ADS_TEST: ${{ matrix.ads_test }}
@@ -109,6 +112,49 @@ jobs:
         working-directory: android
         run: ./gradlew ${{ matrix.gradle }} --no-daemon
 
+      # Every phone permission this build asks for, from Android's final
+      # merged manifest (so permissions added by libraries, like the ads
+      # one, are included, and blocked ones are left out). Shown on the
+      # run's summary page for every commit.
+      - name: List the phone permissions
+        run: |
+          MANIFEST=$(find android/app/build/intermediates -path '*release*' -name AndroidManifest.xml \( -path '*merged_manifest*' -o -path '*packaged_manifests*' \) | head -1)
+          {
+            echo "### Phone permissions: kinbridge-${{ matrix.target }}"
+            if [ -z "$MANIFEST" ]; then
+              echo "Couldn't find the merged manifest."
+            else
+              echo ""
+              echo "| Permission | What it's for |"
+              echo "|---|---|"
+              # One line first: the manifest often puts each attribute on its own line.
+              tr '\n\r\t' '   ' < "$MANIFEST" | grep -oE '<uses-permission(-sdk-23)?[^>]*android:name="[^"]+"' \
+                | sed -E 's/.*android:name="([^"]+)".*/\1/' | sort -u | while read -r perm; do
+                case "$perm" in
+                  android.permission.INTERNET) why="Internet (ads)";;
+                  android.permission.ACCESS_NETWORK_STATE) why="Check if there's a connection (ads)";;
+                  android.permission.ACCESS_WIFI_STATE) why="Check Wi-Fi state (ads)";;
+                  com.google.android.gms.permission.AD_ID) why="Advertising ID (ads)";;
+                  android.permission.READ_MEDIA_IMAGES) why="Pick photos (Android 13+)";;
+                  android.permission.READ_MEDIA_VISUAL_USER_SELECTED) why="Pick only chosen photos (Android 14+)";;
+                  android.permission.READ_EXTERNAL_STORAGE) why="Read photos and files (older Android)";;
+                  android.permission.WRITE_EXTERNAL_STORAGE) why="Save files (older Android)";;
+                  android.permission.VIBRATE) why="Vibrate";;
+                  android.permission.WAKE_LOCK) why="Keep the phone awake briefly (ads, background work)";;
+                  android.permission.RECEIVE_BOOT_COMPLETED) why="Run something after the phone restarts";;
+                  android.permission.FOREGROUND_SERVICE) why="Background service";;
+                  android.permission.CAMERA) why="Camera (should not be here: Bazaar rejects it)";;
+                  android.permission.RECORD_AUDIO) why="Microphone (should not be here: Bazaar rejects it)";;
+                  android.permission.SYSTEM_ALERT_WINDOW) why="Draw over other apps (should not be here: Bazaar rejects it)";;
+                  *.permission.C2D_MESSAGE|*DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION) why="Internal (only this app can use it)";;
+                  *) why="**New: check what needs it**";;
+                esac
+                echo "| \`$perm\` | $why |"
+              done
+            fi
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Prepare the Bazaar signing key
         env:
           BAZAAR_SIGNING_KEY: ${{ secrets.BAZAAR_SIGNING_KEY }}
@@ -121,7 +167,7 @@ jobs:
             || { echo "::error::BAZAAR_SIGNING_KEY doesn't match bazaar-release/cert.pem."; exit 1; }
 
       - name: Sign the APK
-        if: matrix.target != 'bazaar'
+        if: matrix.target == 'phone'
         run: |
           mkdir -p out
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -130,12 +176,12 @@ jobs:
           "$BUILD_TOOLS/apksigner" verify --print-certs "out/kinbridge-${{ matrix.target }}.apk" | head -3
 
       - name: Sign the app bundle
-        if: matrix.target == 'bazaar'
+        if: matrix.target != 'phone'
         run: |
           mkdir -p out
           AAB=android/app/build/outputs/bundle/release/app-release.aab
           # Gradle signs the release bundle with its debug key; strip that,
-          # so the bundle carries only the Bazaar signature.
+          # so the bundle carries only the one signing key (the Bazaar key).
           zip -q -d "$AAB" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' || true
           # jarsigner wants a keystore: one made on the spot from the key and
           # bazaar-release/cert.pem, with a throwaway password.
@@ -143,8 +189,8 @@ jobs:
           openssl pkcs12 -export -inkey "$RUNNER_TEMP/key.pem" -in bazaar-release/cert.pem -name bazaar -out "$RUNNER_TEMP/bazaar.p12" -passout "pass:$PASS"
           jarsigner -keystore "$RUNNER_TEMP/bazaar.p12" -storetype PKCS12 -storepass "$PASS" \
             -sigalg SHA256withRSA -digestalg SHA-256 \
-            -signedjar out/kinbridge-bazaar.aab "$AAB" bazaar
-          jarsigner -verify out/kinbridge-bazaar.aab | tail -1
+            -signedjar "out/kinbridge-${{ matrix.target }}.aab" "$AAB" bazaar
+          jarsigner -verify "out/kinbridge-${{ matrix.target }}.aab" | tail -1
 
       - name: Make Bazaar's signed .bin
         if: matrix.target == 'bazaar'

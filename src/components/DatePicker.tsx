@@ -200,8 +200,6 @@ export function DatePicker({ visible, title, value, onClose, onChange }: Props) 
 
 const CELL_SIZE = 38;
 
-type Styles = ReturnType<typeof createStyles>;
-
 function createStyles(theme: Theme) {
   return StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 20 },

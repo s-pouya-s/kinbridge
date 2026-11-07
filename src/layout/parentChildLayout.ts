@@ -271,6 +271,18 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
           const gap = familyGap != null ? 1 + familyGap : d === shape.depth && siblingRows.has(d) ? 1 : 1 + FAMILY_GAP;
           need = Math.max(need, left.max + gap - r.min);
         }
+        // Separate families also keep their gap from the rows right above
+        // and below, so the edges of two families never come closer
+        // diagonally than side by side (the owner's rule: a family's edge
+        // card one row up sat only 2 cells from the other family's edge).
+        if (familyGap != null) {
+          for (const [d, r] of shape.rows) {
+            for (const nd of [d - 1, d + 1]) {
+              const near = rows.get(nd);
+              if (near) need = Math.max(need, near.max + 1 + familyGap - r.min);
+            }
+          }
+        }
         // No row in common (only with hand-set generations): just go after
         // everything so far.
         if (need === -Infinity) {
@@ -330,14 +342,6 @@ export function computeParentChildLayout(data: FamilyData, metrics: CardMetrics 
     ...members,
     ...members.flatMap((m) => (m.id === RESERVED ? [] : dropRowsOf(m.id, m.depth).map((r) => ({ id: RESERVED, cell: m.cell, depth: r })))),
   ];
-  // The free cell nearest `cell` (then to its right, then left) whose
-  // column is empty on all of `rows`.
-  const nearestFree = (members: Shape['members'], cell: number, rows: number[]) => {
-    for (let step = 0; ; step++) {
-      if (isFree(members, cell + step, rows)) return cell + step;
-      if (step > 0 && isFree(members, cell - step, rows)) return cell - step;
-    }
-  };
 
   // One blood person's branch: their children's row (each child with their
   // own branch, see packShapes), the person centered over that row, and

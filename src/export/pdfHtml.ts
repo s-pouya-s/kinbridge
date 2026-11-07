@@ -243,7 +243,7 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
     .join('');
 
   const exported = date(options.exportedAt.toISOString().slice(0, 10));
-  const subtitle = `${t('peopleCount', { count: digits(data.people.length) })} · ${exported}`;
+  const subtitle = `${t('peopleCount', { count: digits(data.people.length) })} - ${exported}`;
 
   // The poster: the tree at a size you can read, cut into a grid of pages
   // (see POSTER_MM_PER_UNIT). Each page shows its own window onto the one
@@ -299,7 +299,7 @@ export function buildTreePdfHtml(data: FamilyData, options: PdfOptions): string 
       {
         n++;
         posterPages.push(sheet(`<section class="page part">
-  <header><h1>${escape(options.treeName)}</h1><span class="sub">${escape(t('pdfPartOf', { n: digits(n), total: digits(printedTotal) }))} · ${escape(t('pdfAssembleHint'))}</span>${miniMap(r, c)}</header>
+  <header><h1>${escape(options.treeName)}</h1><span class="sub">${escape(t('pdfPartOf', { n: digits(n), total: digits(printedTotal) }))} - ${escape(t('pdfAssembleHint'))}</span>${miniMap(r, c)}</header>
   <div class="tile"><svg viewBox="${originX + c * tileW} ${originY + r * tileH} ${tileW} ${tileH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use href="#tree-art" xlink:href="#tree-art"/></svg></div>
 </section>`));
       }

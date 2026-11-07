@@ -5,6 +5,7 @@ import type { ID, Person } from '../types';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { PersonPicker } from './PersonPicker';
+import { SearchIcon, TreeIcon } from './SearchIcon';
 import { fullName } from '../model/people';
 
 export type RelationshipSlot = 'first' | 'second';
@@ -40,17 +41,21 @@ export function RelationshipSheet({ visible, people, firstId, secondId, onChoose
     return (
       <View style={styles.slot}>
         <Text style={[styles.slotLabel, isRTL && styles.textRTL]}>{label}</Text>
-        <View style={[styles.chosen, !person && styles.chosenEmpty]}>
-          <Text style={[person ? styles.chosenName : styles.chosenPlaceholder, isRTL && styles.textRTL]} numberOfLines={1}>
-            {person ? fullName(person, t('unknown')) : t('noOneChosen')}
-          </Text>
-        </View>
+        {/* The box itself opens the name search (people tap the box); the
+            tree button beside it picks the person by tapping them on the tree. */}
         <View style={[styles.row, isRTL && styles.rowRTL]}>
-          <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]} onPress={() => setSearching(which)}>
-            <Text style={styles.secondaryButtonText}>{t('searchByName')}</Text>
+          <Pressable
+            style={({ pressed }) => [styles.chosen, !person && styles.chosenEmpty, isRTL && styles.rowRTL, pressed && styles.pressed]}
+            onPress={() => setSearching(which)}
+            accessibilityLabel={t('searchByName')}
+          >
+            <Text style={[styles.chosenText, person ? styles.chosenName : styles.chosenPlaceholder, isRTL && styles.textRTL]} numberOfLines={1}>
+              {person ? fullName(person, t('unknown')) : t('noOneChosen')}
+            </Text>
+            <SearchIcon size={16} color={theme.inkDim} />
           </Pressable>
-          <Pressable style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]} onPress={() => onPickOnTree(which)}>
-            <Text style={styles.secondaryButtonText}>{t('pickOnTree')}</Text>
+          <Pressable style={({ pressed }) => [styles.treeButton, pressed && styles.pressed]} onPress={() => onPickOnTree(which)} accessibilityLabel={t('pickOnTree')} hitSlop={4}>
+            <TreeIcon size={20} color={theme.ink} />
           </Pressable>
         </View>
       </View>
@@ -79,6 +84,11 @@ export function RelationshipSheet({ visible, people, firstId, secondId, onChoose
           if (searching) onChoose(searching, id);
           setSearching(null);
         }}
+        onPickOnTree={() => {
+          const which = searching;
+          setSearching(null);
+          if (which) onPickOnTree(which);
+        }}
       />
     </Modal>
   );
@@ -93,14 +103,14 @@ function createStyles(theme: Theme) {
     textRTL: { textAlign: 'right', writingDirection: 'rtl' },
     slot: { marginBottom: 16 },
     slotLabel: { color: theme.inkFaint, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
-    chosen: { backgroundColor: theme.panel2, borderRadius: 12, borderWidth: 1, borderColor: theme.selected, paddingHorizontal: 14, paddingVertical: 11, marginBottom: 8 },
+    chosen: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: theme.panel2, borderRadius: 12, borderWidth: 1, borderColor: theme.selected, paddingHorizontal: 14, paddingVertical: 11 },
+    treeButton: { width: 46, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.stroke, borderRadius: 12, backgroundColor: theme.panel2 },
+    chosenText: { flex: 1 },
     chosenEmpty: { borderColor: theme.stroke, borderStyle: 'dashed' },
     chosenName: { color: theme.ink, fontSize: 15, fontWeight: '700' },
     chosenPlaceholder: { color: theme.inkFaint, fontSize: 14 },
-    row: { flexDirection: 'row', gap: 8 },
+    row: { flexDirection: 'row', alignItems: 'stretch', gap: 8 },
     rowRTL: { flexDirection: 'row-reverse' },
-    secondaryButton: { flex: 1, borderWidth: 1, borderColor: theme.stroke, borderRadius: 12, paddingVertical: 10, alignItems: 'center' },
-    secondaryButtonText: { color: theme.ink, fontSize: 13.5, fontWeight: '600' },
     pressed: { opacity: 0.55 },
     primaryButton: { backgroundColor: theme.lineMarriage, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 4 },
     primaryButtonText: { color: theme.bg, fontSize: 15, fontWeight: '700' },

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,10 @@ interface Props {
   onClose: () => void;
   /** When set, a "Pick on tree" button offers tapping the person on the tree instead of searching. */
   onPickOnTree?: () => void;
+  /** The heading; "Select person" unless given (the search button says "Find a person"). */
+  title?: string;
+  /** Opens the keyboard on the search box right away. */
+  autoFocus?: boolean;
 }
 
 /**
@@ -24,7 +28,7 @@ interface Props {
  * escape hatch for when that person already exists somewhere else in the
  * tree (a cousin marriage, or two separately-started trees meeting).
  */
-export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree }: Props) {
+export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree, title, autoFocus }: Props) {
   const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -34,6 +38,10 @@ export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree 
   // Lifts the sheet above the on-screen keyboard (see useKeyboardHeight).
   const keyboardHeight = useKeyboardHeight();
   const [query, setQuery] = useState('');
+  // Every opening starts with an empty search, not the last one typed.
+  useEffect(() => {
+    if (visible) setQuery('');
+  }, [visible]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -49,12 +57,13 @@ export function PersonPicker({ visible, people, onSelect, onClose, onPickOnTree 
       <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
-          <Text style={[styles.title, isRTL && styles.textEnd]}>{t('selectPerson')}</Text>
+          <Text style={[styles.title, isRTL && styles.textEnd]}>{title ?? t('selectPerson')}</Text>
           <TextInput
             style={[styles.search, isRTL && styles.textEnd]}
             value={query}
             onChangeText={setQuery}
             placeholder={t('searchPeople')}
+            autoFocus={autoFocus}
             placeholderTextColor={theme.inkFaint}
           />
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">

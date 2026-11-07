@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { cancelAnimation, LinearTransition, useAnimatedStyle, useSharedValue, withDecay } from 'react-native-reanimated';
+import Animated, { LinearTransition, runOnUI, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import type { FamilyData, ID, Marriage, Person } from '../types';
 import { CARD_METRICS, cardSize, MARKER_RADIUS, MARKER_RADIUS_X, mirrorX, NODE_HEIGHT, NODE_WIDTH, UNION_LANE_STEP, type CardStyle } from '../layout/layout';
 import { computeParentChildLayout } from '../layout/parentChildLayout';
@@ -10,18 +10,23 @@ import { makeUnionRouter, segmentsOf } from '../layout/routes';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { LineSegment } from './LineSegment';
-import { axisBounds, clamp, clampAxis } from '../utils/camera';
+import { clamp, clampAxis } from '../utils/camera';
 import { cardColors, raisedCardStyle } from './cardLook';
 import { MourningRibbon } from './MourningRibbon';
 import { isDeceased } from '../model/people';
+import { PersonPicker } from './PersonPicker';
+import { SearchIcon } from './SearchIcon';
+import { Spotlight } from './Spotlight';
 import { Minimap, MINIMAP_RESERVE, type MinimapCard, type MinimapLine } from './Minimap';
 
 // The floor for both Reset's fit-by-height (see fitToViewport) and manual
 // pinch-zoom-out — fit-by-height rarely needs it (a tree's generation count
 // is bounded), so this mostly just stops a pinch gesture from zooming out
 // to nothing.
-/** How far out the tree can zoom: far enough to see a big family whole. */
+/** The absolute floor for zooming out; the real limit is `minScale` (the whole tree on screen). */
 const MIN_SCALE = 0.05;
+/** Zooming out may go this far past the zoom where the whole tree just fits, not further. */
+const ZOOM_OUT_PAST_WHOLE = 0.85;
 const MAX_SCALE = 2.5;
 const CANVAS_PADDING = 90;
 const ARROW_HIT = 44;
@@ -57,13 +62,13 @@ interface Props {
    * and a banner in place of the minimap says so.
    */
   pickPrompt?: { message: string; cancelLabel: string; onPick: (person: Person) => void; onCancel: () => void };
-  /** Someone to start centered on and selected (a person's own tree, see PersonTreeView), instead of the tree's left edge. */
+  /** Whose own tree this is (PersonTreeView). Changing it refits the camera and selects that person; centering follows the main tree's rules. */
   focusPersonId?: ID;
   /** The black mourning ribbon on deceased people's cards — a setting in the side menu; on unless turned off. */
   showRibbon?: boolean;
   /** Replaces the "tap again" hint shown under a selected card, for a canvas where a second tap does something else. */
   tapAgainHint?: string;
-  /** Edit mode only: the on-canvas + button, opposite the ↻ one. */
+  /** Edit mode only: the on-canvas + button, in the bottom corner. */
   onAddPerson: () => void;
   /** The overview map at the top of the canvas — a setting in the side menu. */
   showMinimap: boolean;
@@ -172,6 +177,11 @@ export function TreeCanvas({
   /** Whoever was last tapped — used to gray out unrelated lines and, in edit
    * mode, to reveal that one card's move arrows. */
   const [selectedPersonId, setSelectedPersonId] = useState<ID | undefined>(undefined);
+  // The find-a-person list (the search button); placeholder spouses aren't in it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  // The person just found, pulsing for a moment (Spotlight); key restarts it on every search.
+  const [spotlight, setSpotlight] = useState<{ id: ID; key: number } | null>(null);
+  const searchablePeople = useMemo(() => data.people.filter((p) => !p.unknown), [data.people]);
   /** Same idea as selectedPersonId, but for a marriage's ⊕ — edit mode only. */
   const [selectedMarriageId, setSelectedMarriageId] = useState<ID | undefined>(undefined);
   /** The "tap again to see/edit" hint fades on its own after a few seconds
@@ -258,7 +268,9 @@ export function TreeCanvas({
   const topReserve = showMinimap ? MINIMAP_RESERVE : 0;
   const initialFitHeight = window.height - topReserve;
   const initialScale = clamp(initialFitHeight / contentHeight, MIN_SCALE, 1);
-  const initialTranslateX = 0;
+  // The tree's box is centered on its cards (see offsetX), so this starts
+  // the camera with the tree in the middle, never at its left edge.
+  const initialTranslateX = window.width / 2 - (contentWidth / 2) * initialScale;
   const initialTranslateY = topReserve + initialFitHeight / 2 - (contentHeight / 2) * initialScale;
 
   const scale = useSharedValue(initialScale);
@@ -275,12 +287,22 @@ export function TreeCanvas({
   // sits on screen. Mirrored in place for RTL around the tree's true
   // minX/maxX midpoint first, since that midpoint (unlike an assumed
   // 0..width box) doesn't move when minX does.
+  // The cards sit in the exact middle of the content box. The layout's width
+  // and height each count one extra column and row past the last card; that
+  // extra is split evenly between both sides instead of all going to the
+  // right and the bottom, which made centering and the camera's limits
+  // lopsided (more room to the right and below than to the left and above).
+  const cardYs = Array.from(layout.positions.values(), (p) => p.y);
+  const minCardY = cardYs.length > 0 ? Math.min(...cardYs) : 0;
+  const maxCardY = cardYs.length > 0 ? Math.max(...cardYs) : 0;
+  const offsetX = CANVAS_PADDING + (layout.width - (layout.maxX - layout.minX)) / 2;
+  const offsetY = CANVAS_PADDING + (layout.height - (maxCardY - minCardY)) / 2 - minCardY;
   const toCanvas = useCallback(
     (p: { x: number; y: number }) => {
-      const lx = (isRTL ? mirrorX(p.x, layout.minX, layout.maxX) : p.x) - layout.minX + CANVAS_PADDING;
-      return { x: lx, y: p.y + CANVAS_PADDING };
+      const lx = (isRTL ? mirrorX(p.x, layout.minX, layout.maxX) : p.x) - layout.minX + offsetX;
+      return { x: lx, y: p.y + offsetY };
     },
-    [isRTL, layout.minX, layout.maxX]
+    [isRTL, layout.minX, layout.maxX, offsetX, offsetY]
   );
 
   // The person Reset centers on when there's no focus person: the one at the
@@ -339,11 +361,28 @@ export function TreeCanvas({
       // generation doesn't start out hidden underneath it.
       const fitHeight = Math.max(vh - topReserve, vh / 2);
       const fitScale = clamp(fitHeight / contentHeight, MIN_SCALE, 1);
-      // Centered on the focus person when there is one (the one-person
-      // view); otherwise on the person at the very top of the tree.
-      const focusId = focusPersonId ?? topPersonId;
-      const focusPos = focusId ? layout.positions.get(focusId) : undefined;
-      const tx = focusPos ? vw / 2 - toCanvas(focusPos).x * fitScale : 0;
+      // Centered on the person at the very top of the tree, in the main tree
+      // and the one-person tree alike (the owner's rule: the one-person tree
+      // shows the same way as the main tree).
+      const focusPos = topPersonId ? layout.positions.get(topPersonId) : undefined;
+      // Where the cards really are on the canvas: positions are card
+      // centers, so the cards run from half a card left of the first center
+      // to half a card right of the last. (contentWidth also holds a whole
+      // extra column on the right, so centering on it put trees half a
+      // column too far left.)
+      const cardsLeft = offsetX - cardWidth / 2;
+      const cardsRight = offsetX + (layout.maxX - layout.minX) + cardWidth / 2;
+      // A tree narrower than the screen is centered as a whole: centering on
+      // one person left it pushed to one side, since in their own tree that
+      // person often sits near an edge. A wider tree centers on the person,
+      // but never leaves empty screen on one side while the tree runs off
+      // the other.
+      const scaledWidth = (cardsRight - cardsLeft) * fitScale;
+      const edge = 16;
+      const tx =
+        scaledWidth <= vw - edge * 2
+          ? vw / 2 - ((cardsLeft + cardsRight) / 2) * fitScale
+          : clamp(focusPos ? vw / 2 - toCanvas(focusPos).x * fitScale : 0, vw - edge - cardsRight * fitScale, edge - cardsLeft * fitScale);
       const ty = vh - fitHeight + fitHeight / 2 - (contentHeight / 2) * fitScale;
       // withTiming was the one call in this whole file that never actually
       // landed on a real device (a real, previously-shipped bug) — the
@@ -355,13 +394,17 @@ export function TreeCanvas({
       void animated;
       scale.value = fitScale;
       translateX.value = clampAxis(tx, contentWidth, vw, fitScale);
-      translateY.value = clampAxis(ty, contentHeight, vh, fitScale);
+      translateY.value = clampAxis(ty, contentHeight, vh, fitScale, topReserve);
     },
-    [viewport, contentWidth, contentHeight, window.width, window.height, topReserve, focusPersonId, topPersonId, layout, toCanvas]
+    [viewport, contentWidth, contentHeight, window.width, window.height, topReserve, topPersonId, layout, toCanvas, cardWidth, offsetX]
   );
 
+  // A new focus person (the one-person tree opening, or switching to
+  // someone else's) starts from a fresh fit, with that person selected (the
+  // owner's rule), so their own lines and relatives stand out.
   useEffect(() => {
     if (!focusPersonId) return;
+    setSelectedMarriageId(undefined);
     setSelectedPersonId(focusPersonId);
     fitToViewport(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -402,16 +445,37 @@ export function TreeCanvas({
   // 'wheel' listener and zooms around the cursor, matching the pinch math below.
   // The wheel listener below is attached once, so it reads the tree's
   // current size through this ref rather than a stale closure.
-  const boundsRef = useRef({ cw: contentWidth, ch: contentHeight });
-  boundsRef.current = { cw: contentWidth, ch: contentHeight };
+  // The furthest the tree can zoom out: until the whole tree fits on the
+  // screen, and a little past it, never further (the owner's rule: a small
+  // family shrank to a speck and people got lost). A big family can still
+  // zoom out far enough to see all of it.
+  const minScale = (() => {
+    const vw = viewport.width || window.width;
+    const vh = viewport.height || window.height;
+    if (vw === 0 || vh === 0 || contentWidth === 0 || contentHeight === 0) return MIN_SCALE;
+    const whole = Math.min(vw / contentWidth, Math.max(vh - topReserve, vh / 2) / contentHeight);
+    return clamp(whole * ZOOM_OUT_PAST_WHOLE, MIN_SCALE, 1);
+  })();
+  const boundsRef = useRef({ cw: contentWidth, ch: contentHeight, minScale, topReserve });
+  boundsRef.current = { cw: contentWidth, ch: contentHeight, minScale, topReserve };
 
   // When the tree shrinks (someone deleted, a new import) or the screen
   // turns, the camera may now sit outside the tree's area; pull it back in.
   useEffect(() => {
     const vw = viewport.width || window.width;
     const vh = viewport.height || window.height;
-    translateX.value = clampAxis(translateX.value, contentWidth, vw, scale.value);
-    translateY.value = clampAxis(translateY.value, contentHeight, vh, scale.value);
+    // On the UI thread, so it reads where the camera really is. Read here on
+    // the JS thread, right after a fit had just set a new position, it got
+    // the old one (the very first, 0) and wrote it back: the fit was undone
+    // and every tree opened at its left edge instead of centered.
+    const cw = contentWidth;
+    const ch = contentHeight;
+    const reserve = topReserve;
+    runOnUI(() => {
+      'worklet';
+      translateX.value = clampAxis(translateX.value, cw, vw, scale.value);
+      translateY.value = clampAxis(translateY.value, ch, vh, scale.value, reserve);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentWidth, contentHeight, viewport.width, viewport.height]);
 
@@ -426,9 +490,9 @@ export function TreeCanvas({
       const focalX = e.clientX - rect.left;
       const focalY = e.clientY - rect.top;
       const zoomFactor = Math.exp(-e.deltaY * 0.0015);
-      const next = clamp(scale.value * zoomFactor, MIN_SCALE, MAX_SCALE);
+      const next = clamp(scale.value * zoomFactor, boundsRef.current.minScale, MAX_SCALE);
       translateX.value = clampAxis(focalX - ((focalX - translateX.value) * next) / scale.value, boundsRef.current.cw, rect.width, next);
-      translateY.value = clampAxis(focalY - ((focalY - translateY.value) * next) / scale.value, boundsRef.current.ch, rect.height, next);
+      translateY.value = clampAxis(focalY - ((focalY - translateY.value) * next) / scale.value, boundsRef.current.ch, rect.height, next, boundsRef.current.topReserve);
       scale.value = next;
     };
 
@@ -437,22 +501,64 @@ export function TreeCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Clears any selection and re-fits the tree — shared by the on-canvas ↻
-  // button and the parent's resetToken (e.g. after an import).
   const clearSelection = () => {
     setSelectedPersonId(undefined);
     setSelectedMarriageId(undefined);
   };
-  const resetView = () => {
-    clearSelection();
-    fitToViewport(true);
-  };
 
+  // A new resetToken (another tree opened, or an import) clears any
+  // selection and fits the tree to the screen. There is no on-screen
+  // re-fit button any more (the owner removed the ↻ button).
   useEffect(() => {
     if (resetToken === 0) return;
-    resetView();
+    clearSelection();
+    fitToViewport(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetToken]);
+
+  // In edit mode, adding someone (the + button, a spouse, parents, a child)
+  // moves the camera onto the new card, so it's never added out of sight.
+  // New people are found by comparing who's in the tree with the last
+  // render; a new resetToken (another tree opened, an import) doesn't count.
+  // One or two newcomers only (parents come as two): more is a whole new tree.
+  // Moves the camera so these people's cards are in the middle of the
+  // screen (the middle of all of them). The zoom stays exactly as it was
+  // (the owner's rule: only move, never zoom). Runs on the UI thread, where
+  // the camera's current zoom really is (see the clamp effect above for what
+  // reading it on the JS thread once broke).
+  const centerOnPeople = (ids: ID[]) => {
+    const found = ids.map((id) => layout.positions.get(id)).filter((p) => p != null);
+    if (found.length === 0) return;
+    const vw = viewport.width || window.width;
+    const vh = viewport.height || window.height;
+    if (vw === 0 || vh === 0) return;
+    const points = found.map((p) => toCanvas(p));
+    const cx = points.reduce((sum, p) => sum + p.x, 0) / points.length;
+    const cy = points.reduce((sum, p) => sum + p.y, 0) / points.length;
+    const cw = contentWidth;
+    const ch = contentHeight;
+    const reserve = topReserve;
+    runOnUI(() => {
+      'worklet';
+      const s = scale.value;
+      translateX.value = clampAxis(vw / 2 - cx * s, cw, vw, s);
+      translateY.value = clampAxis(vh / 2 - cy * s, ch, vh, s, reserve);
+    })();
+  };
+
+  const knownIdsRef = useRef<Set<ID> | null>(null);
+  const knownResetRef = useRef(resetToken);
+  useEffect(() => {
+    const prev = knownIdsRef.current;
+    const sameTree = knownResetRef.current === resetToken;
+    knownIdsRef.current = new Set(data.people.map((p) => p.id));
+    knownResetRef.current = resetToken;
+    if (!prev || !sameTree || !editMode) return;
+    const added = data.people.filter((p) => !prev.has(p.id)).map((p) => p.id);
+    if (added.length === 0 || added.length > 2) return;
+    centerOnPeople(added);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, resetToken]);
 
   // Pan and pinch run simultaneously, so both apply *incremental* changes to
   // the camera rather than recomputing it from a saved start snapshot. The
@@ -466,39 +572,27 @@ export function TreeCanvas({
   // pinch owns only zooming around the current focal point.
   const boundsWidth = viewport.width || window.width;
   const boundsHeight = viewport.height || window.height;
-  // Letting go while moving flings the tree: it glides to a stop (withDecay
-  // runs on the UI thread here, unlike the JS-side withTiming that never
-  // landed on real phones) within the same edges clampAxis keeps. Any new
-  // touch stops a glide.
-  const stopGlide = () => {
-    'worklet';
-    cancelAnimation(translateX);
-    cancelAnimation(translateY);
-  };
+  // The tree moves only while a finger is on it: letting go stops it right
+  // there. (It used to fling and glide on with withDecay, which the owner
+  // found confusing: the tree kept moving after the finger was lifted.)
   const pan = Gesture.Pan()
     .averageTouches(true)
-    .onBegin(stopGlide)
     .onChange((e) => {
       translateX.value = clampAxis(translateX.value + e.changeX, contentWidth, boundsWidth, scale.value);
-      translateY.value = clampAxis(translateY.value + e.changeY, contentHeight, boundsHeight, scale.value);
-    })
-    .onEnd((e) => {
-      translateX.value = withDecay({ velocity: e.velocityX, clamp: axisBounds(contentWidth, boundsWidth, scale.value) });
-      translateY.value = withDecay({ velocity: e.velocityY, clamp: axisBounds(contentHeight, boundsHeight, scale.value) });
+      translateY.value = clampAxis(translateY.value + e.changeY, contentHeight, boundsHeight, scale.value, topReserve);
     });
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
-      stopGlide();
       lastPinchScale.value = 1;
     })
     .onUpdate((e) => {
       const factor = e.scale / lastPinchScale.value;
       lastPinchScale.value = e.scale;
-      const next = clamp(scale.value * factor, MIN_SCALE, MAX_SCALE);
+      const next = clamp(scale.value * factor, minScale, MAX_SCALE);
       const applied = next / scale.value;
       translateX.value = clampAxis(e.focalX - (e.focalX - translateX.value) * applied, contentWidth, boundsWidth, next);
-      translateY.value = clampAxis(e.focalY - (e.focalY - translateY.value) * applied, contentHeight, boundsHeight, next);
+      translateY.value = clampAxis(e.focalY - (e.focalY - translateY.value) * applied, contentHeight, boundsHeight, next, topReserve);
       scale.value = next;
     });
 
@@ -771,7 +865,6 @@ export function TreeCanvas({
                 height={cardHeight}
                 text={cardText(person, t('unknown'), cardStyle, cardWidth, cardHeight, metrics.nodeHeight, cardGrowth)}
                 cardStyle={cardStyle}
-                isRTL={isRTL}
                 showRibbon={showRibbon}
                 isSelected={isSelected}
                 dimmed={!!connectedIds && !connectedIds.has(person.id)}
@@ -781,6 +874,15 @@ export function TreeCanvas({
               />
             );
           })}
+
+          {/* The card just found with the search button, pulsing so it's seen. */}
+          {spotlight &&
+            (() => {
+              const pos = layout.positions.get(spotlight.id);
+              if (!pos) return null;
+              const c = toCanvas(pos);
+              return <Spotlight key={spotlight.key} x={c.x} y={c.y} width={cardWidth} height={cardHeight} color={theme.selected} onDone={() => setSpotlight(null)} />;
+            })()}
 
           {/* Edit-mode-only move controls, on the canvas itself rather than
               tucked inside the detail popup — a discoverable way to nudge a
@@ -854,23 +956,42 @@ export function TreeCanvas({
         </View>
       )}
 
+      {/* Find a person: in the corner the old ↻ button had (bottom left in
+          Persian, bottom right in English), opposite the edit-mode + button.
+          Picking someone moves the camera onto them, zoom unchanged, and
+          selects them. The magnifier is drawn, not a glyph, which some
+          Android fonts lack. */}
       <Pressable
-        style={({ pressed }) => [styles.resetButton, isRTL ? styles.cornerLeft : styles.cornerRight, pressed && styles.resetButtonPressed]}
-        onPress={resetView}
-        accessibilityLabel={t('resetView')}
+        style={({ pressed }) => [styles.roundButton, isRTL ? styles.cornerLeft : styles.cornerRight, pressed && styles.roundButtonPressed]}
+        onPress={() => setSearchOpen(true)}
+        accessibilityLabel={t('findPerson')}
         hitSlop={6}
       >
-        <Text style={styles.resetButtonText}>↻</Text>
+        <SearchIcon color={theme.ink} />
       </Pressable>
+      <PersonPicker
+        visible={searchOpen}
+        title={t('findPerson')}
+        autoFocus
+        people={searchablePeople}
+        onSelect={(personId) => {
+          setSearchOpen(false);
+          setSelectedMarriageId(undefined);
+          setSelectedPersonId(personId);
+          centerOnPeople([personId]);
+          setSpotlight({ id: personId, key: Date.now() });
+        }}
+        onClose={() => setSearchOpen(false)}
+      />
 
       {editMode && (
         <Pressable
-          style={({ pressed }) => [styles.resetButton, styles.addButton, isRTL ? styles.cornerRight : styles.cornerLeft, pressed && styles.resetButtonPressed]}
+          style={({ pressed }) => [styles.roundButton, styles.addButton, isRTL ? styles.cornerRight : styles.cornerLeft, pressed && styles.roundButtonPressed]}
           onPress={onAddPerson}
           accessibilityLabel={t('addPerson')}
           hitSlop={6}
         >
-          <Text style={[styles.resetButtonText, styles.addButtonText]}>+</Text>
+          <Text style={[styles.roundButtonText, styles.addButtonText]}>+</Text>
         </Pressable>
       )}
     </View>
@@ -890,7 +1011,6 @@ function PersonCard({
   height,
   text,
   cardStyle,
-  isRTL,
   showRibbon,
   isSelected,
   dimmed,
@@ -907,7 +1027,6 @@ function PersonCard({
   /** What the card says and at what size, fitted to the card (see cardText). */
   text: CardText;
   cardStyle: CardStyle;
-  isRTL: boolean;
   showRibbon: boolean;
   isSelected: boolean;
   /** Someone else is selected and this person isn't connected to them: drawn gray, like the lines (see connectedIds). */
@@ -975,7 +1094,12 @@ type Styles = ReturnType<typeof createStyles>;
 
 function createStyles(theme: Theme) {
   return StyleSheet.create({
-  fill: { flex: 1, overflow: 'hidden', backgroundColor: theme.bg },
+  // Always laid out left to right. The tree is mirrored for RTL by hand
+  // (mirrorX), and every camera formula assumes the content box starts at
+  // the left edge. On a phone set to Persian, Expo Go lays the app out right
+  // to left, which swaps left/right: the box was pinned to the right edge and
+  // the tree opened off to the left.
+  fill: { flex: 1, overflow: 'hidden', backgroundColor: theme.bg, direction: 'ltr' },
   gestureArea: { flex: 1 },
   // No transformOrigin override here — see contentStyle's own comment for
   // why the top-left-pivot behavior every translate/scale formula in this
@@ -1024,8 +1148,8 @@ function createStyles(theme: Theme) {
     flexShrink: 1,
     ...(Platform.OS === 'web' ? ({ userSelect: 'none' } as object) : null),
   },
-  // Inset on both sides by more than the ↻ button's footprint, so a long
-  // hint wraps instead of running under that button.
+  // Inset on both sides by more than the + button's footprint, so a long
+  // hint wraps instead of running under it.
   hintBar: {
     position: 'absolute',
     bottom: 18,
@@ -1033,7 +1157,7 @@ function createStyles(theme: Theme) {
     right: 80,
     alignItems: 'center',
   },
-  resetButton: {
+  roundButton: {
     position: 'absolute',
     bottom: 16,
     width: 48,
@@ -1071,12 +1195,11 @@ function createStyles(theme: Theme) {
   pickBannerCancel: { color: theme.lineEnded, fontSize: 13.5, fontWeight: '700' },
   cornerRight: { right: 16 },
   cornerLeft: { left: 16 },
-  resetButtonPressed: { opacity: 0.55 },
-  // Same round button as ↻, filled in the edit-mode accent so it reads as
-  // the one edit action, not another view control.
+  roundButtonPressed: { opacity: 0.55 },
+  // A round button filled in the edit-mode accent, the one edit action.
   addButton: { backgroundColor: theme.lineMarriage, borderColor: theme.lineMarriage },
   addButtonText: { color: theme.bg, fontSize: 28, lineHeight: 32 },
-  resetButtonText: { color: theme.ink, fontSize: 24, fontWeight: '700', lineHeight: 28 },
+  roundButtonText: { color: theme.ink, fontSize: 24, fontWeight: '700', lineHeight: 28 },
   hintText: {
     color: theme.inkDim,
     fontSize: 12.5,

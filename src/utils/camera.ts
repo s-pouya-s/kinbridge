@@ -5,12 +5,17 @@ export function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-/** How far past the tree's edge the camera may drift, as a fraction of the screen. */
+/** How far past the tree's edge the camera may drift, as a fraction of the screen (big trees). */
 const EDGE_SLACK = 0.4;
+/**
+ * …but never more than this fraction of the tree's own size on screen, so a
+ * small family can't be dragged far into empty space (the owner's rule:
+ * people got lost exploring around a few cards). Big trees are unaffected.
+ */
+const EDGE_SLACK_OF_TREE = 0.25;
 
 /**
- * The range clampAxis keeps one camera axis's translate in, for a fling to
- * glide within (see TreeCanvas's pan). Defined before clampAxis on purpose:
+ * The range clampAxis keeps one camera axis's translate in. Defined before clampAxis on purpose:
  * Reanimated captures what a worklet calls when this file loads, so a
  * worklet defined later is still undefined then ("undefined is not a
  * function", a real, previously-shipped bug).
@@ -18,7 +23,7 @@ const EDGE_SLACK = 0.4;
 export function axisBounds(content: number, view: number, s: number): [number, number] {
   'worklet';
   const scaled = content * s;
-  const slack = view * EDGE_SLACK;
+  const slack = Math.min(view * EDGE_SLACK, scaled * EDGE_SLACK_OF_TREE);
   return scaled >= view ? [view - scaled - slack, slack] : [-slack, view - scaled + slack];
 }
 
@@ -32,8 +37,10 @@ export function axisBounds(content: number, view: number, s: number): [number, n
  * far they lose the tree. The space to move through is the tree's own area,
  * which grows with the tree.
  */
-export function clampAxis(t: number, content: number, view: number, s: number) {
+export function clampAxis(t: number, content: number, view: number, s: number, startReserve?: number) {
   'worklet';
   const [min, max] = axisBounds(content, view, s);
-  return clamp(t, min, max);
+  // `startReserve`: extra room at the start of the axis (the top, under the
+  // minimap), so the first cards can be pulled out from under it.
+  return clamp(t, min, max + (startReserve ?? 0));
 }

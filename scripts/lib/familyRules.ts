@@ -202,6 +202,26 @@ export function familyProblems(data: FamilyData, options: RuleOptions = {}): str
         }
       }
     });
+    // …and the same between neighboring rows (one generation apart): the edge
+    // of one family never comes closer to the edge of another one row up or
+    // down (the owner's rule; one sat diagonally only 2 cells away).
+    // Neighboring rows: the drawn rows in order from the top.
+    const rowYs = [...rows.keys()].sort((a, b) => a - b);
+    rowYs.forEach((y, i) => {
+      const upper = rows.get(y)!;
+      const lower = i + 1 < rowYs.length ? rows.get(rowYs[i + 1])! : null;
+      if (!lower) return;
+      for (const a of upper) {
+        for (const b of lower) {
+          if (Math.abs(a.x - b.x) >= (rootGap + 1) * col) continue;
+          const fa = foundersOf(a.id);
+          const fb = foundersOf(b.id);
+          if (fa.size && fb.size && ![...fa].some((f) => fb.has(f))) {
+            say(`separate families too close across rows: ${name(a.id)} and ${name(b.id)} (one row lower) have ${Math.abs(a.x - b.x) / col - 1} empty cells between them`);
+          }
+        }
+      }
+    });
 
     // Children of two couples who share no parent never sit side by side.
     rows.forEach((row) => {

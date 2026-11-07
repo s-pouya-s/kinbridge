@@ -1,25 +1,30 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Project } from '../storage/storage';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { useKeyboardHeight } from '../utils/useKeyboardHeight';
+import type { Rect } from './TreeFlight';
+import { localDigits } from '../i18n/locales';
 
 interface Props {
   visible: boolean;
   projects: Project[];
   activeId: string;
-  /** How many people the open tree has; the others aren't loaded until opened. */
-  activePeopleCount: number;
-  /** What a new tree is called unless renamed: the next numbered default («شجره‌نامه ۳»). */
+  /** How many men and women each tree has, by project id (missing while still being counted). */
+  stats: Record<string, { total: number; men: number; women: number } | undefined>;
+  /** What a new tree is called unless renamed: the next numbered default («تبارنامه ۳»). */
   defaultNewName: string;
-  onOpen: (projectId: string) => void;
+  /** `from` is where the picked row was on screen, for the fly-to-title animation (TreeFlight). */
+  onOpen: (projectId: string, from?: Rect) => void;
   onCreate: (name: string) => void;
   onRename: (projectId: string, name: string) => void;
   /** Asks for confirmation itself; never offered for the last remaining tree. */
   onDelete: (projectId: string) => void;
   onClose: () => void;
+  /** Opens that tree in edit mode. */
+  onEdit: (projectId: string, from?: Rect) => void;
 }
 
 /**
@@ -27,8 +32,8 @@ interface Props {
  * place, or start a new one. Each is its own separate project, with its own
  * people and photos (see storage.ts's ProjectIndex).
  */
-export function ProjectsSheet({ visible, projects, activeId, activePeopleCount, defaultNewName, onOpen, onCreate, onRename, onDelete, onClose }: Props) {
-  const { t, isRTL } = useI18n();
+export function ProjectsSheet({ visible, projects, activeId, stats, defaultNewName, onOpen, onCreate, onRename, onDelete, onClose, onEdit }: Props) {
+  const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
@@ -38,6 +43,14 @@ export function ProjectsSheet({ visible, projects, activeId, activePeopleCount, 
   const [draftName, setDraftName] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  // Each row, so a pick can say where it was on screen.
+  const rowRefs = useRef(new Map<string, View>());
+  /** Calls `then` with the row's place on screen (or nothing, if it can't be measured). */
+  const withRowRect = (projectId: string, then: (from?: Rect) => void) => {
+    const row = rowRefs.current.get(projectId);
+    if (!row) return then();
+    row.measureInWindow((x, y, width, height) => then(width > 0 ? { x, y, width, height } : undefined));
+  };
 
   // Every opening starts clean, with nothing half-typed from last time.
   useEffect(() => {
@@ -79,19 +92,36 @@ export function ProjectsSheet({ visible, projects, activeId, activePeopleCount, 
               return (
                 <Pressable
                   key={project.id}
+                  ref={(node) => {
+                    if (node) rowRefs.current.set(project.id, node);
+                    else rowRefs.current.delete(project.id);
+                  }}
                   style={({ pressed }) => [styles.row, isActive && styles.rowActive, isRTL && styles.rowRTL, pressed && styles.pressed]}
-                  onPress={() => onOpen(project.id)}
+                  onPress={() => withRowRect(project.id, (from) => onOpen(project.id, from))}
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.name, isRTL && styles.textRTL]} numberOfLines={1}>
                       {project.name}
                     </Text>
-                    {isActive && (
+                    {/* Everyone, men and women in every tree, joined by " - " (a "·" reads
+                        as a zero in Persian). The open tree is marked by its border, not words. */}
+                    {stats[project.id] && (
                       <Text style={[styles.meta, isRTL && styles.textRTL]}>
-                        {t('currentTree')} · {t('peopleCount', { count: activePeopleCount })}
+                        {[
+                          t('peopleCount', { count: localDigits(stats[project.id]!.total, locale) }),
+                          t('menCount', { count: localDigits(stats[project.id]!.men, locale) }),
+                          t('womenCount', { count: localDigits(stats[project.id]!.women, locale) }),
+                        ].join(' - ')}
                       </Text>
                     )}
                   </View>
+                  <Pressable
+                    style={({ pressed }) => [styles.smallButton, styles.smallButtonPrimary, pressed && styles.pressed]}
+                    onPress={() => withRowRect(project.id, (from) => onEdit(project.id, from))}
+                    hitSlop={4}
+                  >
+                    <Text style={styles.smallButtonPrimaryText}>{t('edit')}</Text>
+                  </Pressable>
                   <Pressable
                     style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}
                     onPress={() => {

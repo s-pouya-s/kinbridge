@@ -26,17 +26,17 @@
     "production": {
       "autoIncrement": true
     },
-    "preview-galaxy": {
+    "preview-play": {
       "extends": "preview",
       "env": {
         "EXPO_PUBLIC_ADS_TEST": "1",
-        "EXPO_PUBLIC_APP_VARIANT": "galaxy"
+        "EXPO_PUBLIC_APP_VARIANT": "play"
       }
     },
-    "production-galaxy": {
+    "production-play": {
       "extends": "production",
       "env": {
-        "EXPO_PUBLIC_APP_VARIANT": "galaxy"
+        "EXPO_PUBLIC_APP_VARIANT": "play"
       }
     }
   },

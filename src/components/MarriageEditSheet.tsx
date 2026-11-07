@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { ID, Marriage, MarriageStatus, Person } from '../types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { canBeChildOf } from '../model/mutations';
 import { marriageYearForDisplay, marriageYearForStorage } from '../utils/calendar';
 import { toAsciiDigits } from '../i18n/locales';
 import { useKeyboardHeight } from '../utils/useKeyboardHeight';
+import { confirmDestructive } from '../utils/alert';
 
 interface Props {
   marriage: Marriage | null;
@@ -21,6 +22,10 @@ interface Props {
   visible: boolean;
   canDelete: boolean;
   onClose: () => void;
+  /** Something was added or removed from this sheet (spouse, parents, children) since it opened. */
+  treeChanged: boolean;
+  /** Cancel after a change: undo everything done in this sheet and close it. */
+  onDiscard: () => void;
   onSave: (patch: Partial<Omit<Marriage, 'id' | 'spouseIds' | 'childIds'>>) => void;
   onDelete: () => void;
   onAddChild: () => void;
@@ -35,7 +40,7 @@ interface Props {
   onToggleBornTogether: (aId: string, bId: string) => void;
 }
 
-export function MarriageEditSheet({ marriage, people, marriages: allMarriages, visible, canDelete, onClose, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild, onReorderChildren, onResetChildOrder, onToggleBornTogether }: Props) {
+export function MarriageEditSheet({ marriage, people, marriages: allMarriages, visible, canDelete, onClose, treeChanged, onDiscard, onSave, onDelete, onAddChild, onAddExistingChild, onRemoveChild, onReorderChildren, onResetChildOrder, onToggleBornTogether }: Props) {
   const { t, isRTL, locale } = useI18n();
   const { theme } = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -56,18 +61,30 @@ export function MarriageEditSheet({ marriage, people, marriages: allMarriages, v
   // but not saved yet (a real, previously-shipped bug: an ended marriage
   // turned back to current as soon as a child was added).
   const marriageId = marriage?.id;
+  // What the form held when it was filled; closing after a change asks first.
+  const filledWith = useRef('');
   useEffect(() => {
     if (!marriage || !visible) return;
-    setStatus(marriage.status);
     // Marriage years are stored Shamsi and shown in this language's calendar (see marriageYearForDisplay).
-    setMarriedYear(marriage.marriedYear != null ? String(marriageYearForDisplay(marriage.marriedYear, locale)) : '');
-    setEndedYear(marriage.endedYear != null ? String(marriageYearForDisplay(marriage.endedYear, locale)) : '');
+    const married = marriage.marriedYear != null ? String(marriageYearForDisplay(marriage.marriedYear, locale)) : '';
+    const ended = marriage.endedYear != null ? String(marriageYearForDisplay(marriage.endedYear, locale)) : '';
+    filledWith.current = JSON.stringify([marriage.status, married, ended]);
+    setStatus(marriage.status);
+    setMarriedYear(married);
+    setEndedYear(ended);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marriageId, visible]);
 
   if (!marriage) return null;
   const byId = new Map(people.map((p) => [p.id, p]));
   const inputStyle = [styles.input, isRTL && styles.textEnd];
+
+  const changed = treeChanged || JSON.stringify([status, marriedYear, endedYear]) !== filledWith.current;
+  /** Closing without Save: asks first when something was changed, then undoes all of it (typed fields and people added or removed here). */
+  const requestClose = () => {
+    if (!changed) return onClose();
+    confirmDestructive(t('unsavedTitle'), t('unsavedSheetMessage'), t('discard'), t('keepEditing'), onDiscard);
+  };
 
   const handleSave = () => {
     onSave({
@@ -80,7 +97,7 @@ export function MarriageEditSheet({ marriage, people, marriages: allMarriages, v
   };
 
   return (
-    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal statusBarTranslucent navigationBarTranslucent visible={visible} animationType="slide" transparent onRequestClose={requestClose}>
       {/* Sibling, not wrapping, Pressable for backdrop-dismiss — see PersonSheet's
           comment on why nesting the ScrollView inside a Pressable made scrolling
           fight the backdrop for touch-responder status. */}
@@ -88,7 +105,7 @@ export function MarriageEditSheet({ marriage, people, marriages: allMarriages, v
           Android, so the draggable children list needs one of its own. */}
       <GestureHandlerRootView style={{ flex: 1 }}>
       <View style={[styles.backdrop, { paddingTop: insets.top, paddingBottom: keyboardHeight }]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} />
         <View style={[styles.sheet, { paddingBottom: 16 + insets.bottom, paddingLeft: 20 + insets.left, paddingRight: 20 + insets.right }]}>
           <ScrollView keyboardShouldPersistTaps="handled">
             <Field styles={styles} label={t('status')} isRTL={isRTL}>
@@ -152,7 +169,7 @@ export function MarriageEditSheet({ marriage, people, marriages: allMarriages, v
             </Pressable>
             {!canDelete && <Text style={[styles.hint, isRTL && styles.textEnd]}>{t('deleteMarriageHint')}</Text>}
 
-            <Pressable style={styles.cancelButton} onPress={onClose}>
+            <Pressable style={styles.cancelButton} onPress={requestClose}>
               <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
             </Pressable>
           </ScrollView>
@@ -242,7 +259,6 @@ function createStyles(theme: Theme) {
   bornTogetherHint: { color: theme.inkFaint, fontSize: 12, marginTop: 8 },
   resetOrder: { alignSelf: 'flex-start', paddingVertical: 4, marginBottom: 8 },
   resetOrderText: { color: theme.lineMarriage, fontSize: 12.5, fontWeight: '600' },
-  childRemove: { color: theme.lineEnded, fontSize: 12.5, fontWeight: '600' },
   primaryButton: { backgroundColor: theme.lineMarriage, borderRadius: 12, paddingVertical: 12, alignItems: 'center', marginTop: 6 },
   primaryButtonText: { color: theme.bg, fontSize: 14, fontWeight: '700' },
   secondaryButton: { borderWidth: 1, borderColor: theme.stroke, borderRadius: 12, paddingVertical: 10, alignItems: 'center' },

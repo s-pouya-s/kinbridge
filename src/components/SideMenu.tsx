@@ -7,12 +7,11 @@ import { useI18n } from '../i18n';
 import type { CardStyle } from '../layout/layout';
 import { AVAILABLE_LOCALES } from '../i18n';
 import { localeInfo, type Locale } from '../i18n/locales';
+import { APP_VARIANT, PLAY_APP_NAME } from '../config/variant';
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  editMode: boolean;
-  onToggleEditMode: () => void;
   /** Switches the app to this language. */
   onSetLocale: (locale: Locale) => void;
   onToggleTheme: () => void;
@@ -44,8 +43,6 @@ interface Props {
 export function SideMenu({
   visible,
   onClose,
-  editMode,
-  onToggleEditMode,
   onSetLocale,
   onToggleTheme,
   showMinimap,
@@ -107,16 +104,11 @@ export function SideMenu({
             },
           ]}
         >
-          <Text style={[styles.title, isRTL && styles.textRTL]}>{t('appTitle')}</Text>
+          <Text style={[styles.title, isRTL && styles.textRTL]}>
+            {/* Google Play's version is "Kin Bridge" in every language; Bazaar's title follows the language. */}
+            {APP_VARIANT === 'play' ? PLAY_APP_NAME : t('appTitle')}
+          </Text>
           <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.list}>
-            <MenuRow
-              styles={styles}
-              label={t('editMode')}
-              value={editMode ? t('on') : t('off')}
-              active={editMode}
-              onPress={closeThen(onToggleEditMode)}
-            />
-            <View style={styles.divider} />
             {/* Each language is named in itself, not translated, so someone
                 who can't read the current one can still find their own. The
                 list opens right here in the menu, so no second pop-up stacks
@@ -156,8 +148,9 @@ export function SideMenu({
             <MenuRow styles={styles} label={t('findRelationship')} onPress={closeThen(onFindRelationship)} />
             <View style={styles.divider} />
             <MenuRow styles={styles} label={t('import')} onPress={closeThen(onImport)} />
-            <MenuRow styles={styles} label={t('export')} onPress={closeThen(onExport)} />
-            <MenuRow styles={styles} label={t('exportPdf')} onPress={closeThen(onExportPdf)} />
+            {/* What each file is for, in brackets: export to share, PDF to print. */}
+            <MenuRow styles={styles} label={`${t('export')} (${t('forSharing')})`} onPress={closeThen(onExport)} />
+            <MenuRow styles={styles} label={`${t('exportPdf')} (${t('forPrinting')})`} onPress={closeThen(onExportPdf)} />
             <View style={styles.divider} />
             <MenuRow styles={styles} label={t('help')} onPress={closeThen(onHelp)} />
           </ScrollView>

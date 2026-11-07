@@ -48,9 +48,10 @@
     "check:local": "tsx scripts/checkLocalFamily.ts",
     "check:families": "tsx scripts/checkFamilies.ts",
     "generate:families": "tsx scripts/generateFamilies.ts",
-    "check:all": "npm run -s typecheck && npm run -s check:parentChild && npm run -s check:families && npm run -s check:layout && npm run -s check:mutations && npm run -s check:migrate && npm run -s check:jalali && npm run -s check:i18n && npm run -s check:launchAd && npm run -s check:local",
+    "check:all": "npm run -s typecheck && npm run -s check:parentChild && npm run -s check:families && npm run -s check:layout && npm run -s check:mutations && npm run -s check:migrate && npm run -s check:jalali && npm run -s check:i18n && npm run -s check:launchAd && npm run -s check:local && npm run -s check:devLeftovers",
     "prepare": "git config core.hooksPath .githooks",
-    "check:i18n": "tsx scripts/checkI18n.ts"
+    "check:i18n": "tsx scripts/checkI18n.ts",
+    "check:devLeftovers": "tsx scripts/checkNoDevLeftovers.ts"
   },
   "private": true
 }

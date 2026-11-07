@@ -51,7 +51,7 @@ const families: { name: string; situations: string[]; data: FamilyData }[] = fs
   .sort()
   .map((f) => JSON.parse(fs.readFileSync(`${DIR}/${f}`, 'utf8')));
 families.push({ name: 'built-in sample family', situations: [], data: sampleFamily });
-families.push({ name: 'English sample family (Galaxy Store)', situations: [], data: sampleFamilyEnglish });
+families.push({ name: 'English sample family (Google Play)', situations: [], data: sampleFamilyEnglish });
 families.push({ name: 'rich fixture', situations: [], data: richFamily });
 
 let failed = 0;

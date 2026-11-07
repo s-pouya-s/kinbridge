@@ -129,7 +129,7 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
                   {!person.unknown && (
                     <Text style={[styles.dates, isRTL && styles.textEnd]}>
                       {person.born ? `${t('bornPrefix')} ${calendarFor(locale).format(person.born)}` : t('birthYearUnknown')}
-                      {person.died ? ` · ${t('diedPrefix')} ${calendarFor(locale).format(person.died)}` : isDeceased(person) ? ` · ${t('deceasedStatus')}` : ` · ${t('living')}`}
+                      {person.died ? ` - ${t('diedPrefix')} ${calendarFor(locale).format(person.died)}` : isDeceased(person) ? ` - ${t('deceasedStatus')}` : ` - ${t('living')}`}
                     </Text>
                   )}
                 </View>

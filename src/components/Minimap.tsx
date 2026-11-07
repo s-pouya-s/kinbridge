@@ -133,7 +133,7 @@ export function Minimap({ contentWidth, contentHeight, cards, lines, cardWidth, 
     const cx = (mx - offX) / k;
     const cy = (my - offY) / k;
     translateX.value = clampAxis(vw / 2 - cx * s, contentWidth, vw, s);
-    translateY.value = clampAxis(vh / 2 - cy * s, contentHeight, vh, s);
+    translateY.value = clampAxis(vh / 2 - cy * s, contentHeight, vh, s, MINIMAP_RESERVE);
   };
   const steer = Gesture.Pan()
     .minDistance(0)

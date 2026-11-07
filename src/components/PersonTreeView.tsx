@@ -27,8 +27,9 @@ const noop = () => {};
  * One person's own family tree, full screen: them, every recorded ancestor
  * and every recorded descendant (see personTreeData), drawn by the same
  * TreeCanvas as the main tree, so zoom, pan, the overview map and the card
- * style all behave the same. Read-only. The person starts centered and
- * selected; tapping someone else twice switches to that person's own tree.
+ * style all behave the same, and it's centered by the same rules. The
+ * person starts selected. Read-only. Tapping someone twice switches to
+ * that person's own tree.
  */
 export function PersonTreeView({ data, personId, cardStyle, showMinimap, showRibbon, onClose }: Props) {
   const { t, isRTL } = useI18n();
