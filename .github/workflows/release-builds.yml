@@ -14,6 +14,9 @@
 #                        key; in Play App Signing, upload this key as the app
 #                        signing key so Play's builds match Bazaar's.
 #
+# The bazaar and play artifacts also hold R8's mapping.txt (the code is
+# obfuscated); upload it to the Play console with the bundle.
+#
 # Every file is signed with the one Bazaar signing key, so each installs as
 # an update over the others' installs: the repository secret
 # BAZAAR_SIGNING_KEY holds the private key (the PEM text of .ssh-key), and
@@ -194,6 +197,14 @@ jobs:
             -sigalg SHA256withRSA -digestalg SHA-256 \
             -signedjar "out/kinbridge-${{ matrix.target }}.aab" "$AAB" bazaar
           jarsigner -verify "out/kinbridge-${{ matrix.target }}.aab" | tail -1
+
+      # R8 renames the Java/Kotlin code (app.json, expo-build-properties).
+      # mapping.txt turns crash reports back into real names: upload it to
+      # the Play console with each bundle (App bundle explorer, "Upload
+      # ReTrace mapping file"). Fails if R8 didn't run.
+      - name: Keep the R8 mapping file
+        if: matrix.target != 'phone'
+        run: cp android/app/build/outputs/mapping/release/mapping.txt "out/kinbridge-${{ matrix.target }}-mapping.txt"
 
       - name: Make Bazaar's signed .bin
         if: matrix.target == 'bazaar'

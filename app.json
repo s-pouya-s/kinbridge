@@ -50,7 +50,16 @@
           "backgroundColor": "#400C1F"
         }
       ],
-      ["expo-localization", { "supportsRTL": false }]
+      ["expo-localization", { "supportsRTL": false }],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "extra": {
       "supportsRTL": false,
