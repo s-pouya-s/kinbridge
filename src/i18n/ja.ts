@@ -146,6 +146,7 @@ export const ja: Record<StringKey, string> = {
   albumCount: 'アルバム（{count}）',
   addAlbumPhotos: '+ 写真を追加',
   photoPermissionDenied: '写真を追加するには、写真ライブラリへのアクセスが必要です。端末の設定で許可できます。',
+  photoFailed: 'この写真を追加できませんでした。もっと小さい写真をお試しください。',
   bornYear: '生年月日',
   diedYear: '没年月日',
   selectDate: '日付を選択',

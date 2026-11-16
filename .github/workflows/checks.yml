@@ -1,0 +1,25 @@
+# Runs every check (npm run check:all) on each push to staging and on each
+# pull request into main, so a broken change shows up before release.
+# Nothing is built here: the store files are built only when a pull request
+# from staging is merged into main (release-builds.yml).
+name: Checks
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run every check
+        run: npm run -s check:all

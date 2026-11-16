@@ -4,6 +4,7 @@ import { File, Paths } from 'expo-file-system';
 import type { FamilyData } from '../types';
 import { normalizeFamilyData } from './migrate';
 import { readAlbumFiles, writeAlbumFiles } from '../utils/album';
+import { cardPhotosInline, cardPhotosToFiles } from '../utils/photoFiles';
 import { saveThenOfferShare } from '../utils/saveFile';
 import type { TFunction } from '../i18n';
 
@@ -61,11 +62,17 @@ export function newProjectId(): string {
 export async function loadFamilyData(projectId: string): Promise<FamilyData | null> {
   const raw = await AsyncStorage.getItem(dataKey(projectId));
   if (!raw) return null;
+  let data: FamilyData;
   try {
-    return normalizeFamilyData(JSON.parse(raw) as FamilyData);
+    data = normalizeFamilyData(JSON.parse(raw) as FamilyData);
   } catch {
     return null;
   }
+  // Card photos used to be saved inline in the tree; move any still there
+  // into their own files, once, and save the smaller tree (photoFiles.ts).
+  const moved = cardPhotosToFiles(data, projectId);
+  if (moved !== data) await saveFamilyData(projectId, moved).catch(() => undefined);
+  return moved;
 }
 
 export async function saveFamilyData(projectId: string, data: FamilyData): Promise<void> {
@@ -100,8 +107,13 @@ export interface ExportTree {
 export async function exportTrees(trees: ExportTree[], t: TFunction): Promise<void> {
   const exportedAt = new Date().toISOString();
   const albumFiles: Record<string, string> = {};
-  for (const tree of trees) Object.assign(albumFiles, await readAlbumFiles(tree.data));
-  const json = JSON.stringify({ kinbridgeExport: 2, exportedAt, trees: trees.map((tree) => ({ name: tree.name, ...tree.data })), albumFiles }, null, 2);
+  const inlined: ExportTree[] = [];
+  for (const tree of trees) {
+    Object.assign(albumFiles, await readAlbumFiles(tree.data));
+    // Card photos go in inline, as always, so older app versions can still import the file.
+    inlined.push({ name: tree.name, data: await cardPhotosInline(tree.data) });
+  }
+  const json = JSON.stringify({ kinbridgeExport: 2, exportedAt, trees: inlined.map((tree) => ({ name: tree.name, ...tree.data })), albumFiles }, null, 2);
   const baseName = trees.length === 1 ? trees[0].name.replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'family-tree' : 'family-trees';
   const fileName = `${baseName} ${exportedAt.slice(0, 10)}.json`;
 
@@ -175,9 +187,9 @@ export async function pickImportFile(): Promise<ImportFile | null> {
   return readExport(JSON.parse(await picked.result.text()));
 }
 
-/** One chosen tree from an import file, ready to save: its album photos written back out (only the ones it uses). */
+/** One chosen tree from an import file, ready to save: its card photos and album photos (only the ones it uses) written out as files. */
 export function importedTreeData(tree: ExportTree, albumFiles: Record<string, string>): FamilyData {
-  return writeAlbumFiles(tree.data, albumFiles);
+  return writeAlbumFiles(cardPhotosToFiles(tree.data), albumFiles);
 }
 
 /** The error pickImportFile throws for a file that isn't one of this app's exports, so the caller can say so plainly. */

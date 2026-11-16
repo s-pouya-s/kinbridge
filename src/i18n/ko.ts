@@ -146,6 +146,7 @@ export const ko: Record<StringKey, string> = {
   albumCount: '사진첩 ({count})',
   addAlbumPhotos: '+ 사진 추가',
   photoPermissionDenied: '사진을 추가하려면 사진 보관함 접근 권한이 필요합니다. 기기 설정에서 허용할 수 있습니다.',
+  photoFailed: '이 사진을 추가할 수 없습니다. 더 작은 사진을 사용해 보세요.',
   bornYear: '생년월일',
   diedYear: '사망일',
   selectDate: '날짜 선택',

@@ -146,6 +146,7 @@ export const id: Record<StringKey, string> = {
   albumCount: 'Album foto ({count})',
   addAlbumPhotos: '+ Tambah foto',
   photoPermissionDenied: 'Akses galeri foto diperlukan untuk menambahkan gambar. Anda dapat mengizinkannya di pengaturan perangkat.',
+  photoFailed: 'Foto ini tidak dapat ditambahkan. Coba foto yang lebih kecil.',
   bornYear: 'Tanggal lahir',
   diedYear: 'Tanggal wafat',
   selectDate: 'Pilih tanggal',

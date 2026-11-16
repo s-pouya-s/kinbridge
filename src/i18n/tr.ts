@@ -146,6 +146,7 @@ export const tr: Record<StringKey, string> = {
   albumCount: 'Fotoğraf albümü ({count})',
   addAlbumPhotos: '+ Fotoğraf ekle',
   photoPermissionDenied: 'Fotoğraf eklemek için fotoğraf arşivine erişim gerekiyor. Cihaz ayarlarından izin verebilirsiniz.',
+  photoFailed: 'Bu fotoğraf eklenemedi. Daha küçük bir fotoğraf deneyin.',
   bornYear: 'Doğum tarihi',
   diedYear: 'Ölüm tarihi',
   selectDate: 'Tarih seç',

@@ -150,6 +150,7 @@ export const fa: Record<keyof typeof en, string> = {
   albumCount: 'آلبوم عکس ({count})',
   addAlbumPhotos: '+ افزودن عکس',
   photoPermissionDenied: 'برای افزودن عکس، دسترسی به گالری لازم است. می‌توانید آن را از تنظیمات دستگاه فعال کنید.',
+  photoFailed: 'این عکس اضافه نشد. یک عکس کوچک‌تر را امتحان کنید.',
   bornYear: 'تاریخ تولد',
   diedYear: 'تاریخ فوت',
   selectDate: 'انتخاب تاریخ',

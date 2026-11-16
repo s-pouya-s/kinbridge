@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { calendarFor } from '../utils/calendar';
-import { albumPhotoUri } from '../utils/album';
+import { photoSource } from '../utils/photoFiles';
 import { fullName, isDeceased, shortName } from '../model/people';
 import { PhotoViewer } from './PhotoViewer';
 import { bornTogetherWith } from '../layout/siblings';
@@ -61,7 +61,7 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
   const displayName = (p: Person) => shortName(p, t('unknown'));
   // Their twins, triplets, ... (children born together), shown under their name.
   const twins = person ? bornTogetherWith(marriages, person.id).map((id) => people.find((p) => p.id === id)).filter((p): p is Person => !!p) : [];
-  const albumUris = useMemo(() => (person?.photos ?? []).map(albumPhotoUri), [person]);
+  const albumUris = useMemo(() => (person?.photos ?? []).map(photoSource), [person]);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   // The OS's own scroll indicator defaults to a color that's nearly
@@ -109,7 +109,7 @@ export function PersonSheet({ person, people, marriages, visible, onClose, onSho
             >
               <View style={[styles.header, isRTL && styles.rowRTL]}>
                 {person.photoUri ? (
-                  <Image source={{ uri: person.photoUri }} style={styles.avatarImage} />
+                  <Image source={{ uri: photoSource(person.photoUri) }} style={styles.avatarImage} />
                 ) : (
                   <View style={styles.avatar}>
                     <Text style={styles.avatarText}>{person.unknown ? '?' : person.name.charAt(0)}</Text>

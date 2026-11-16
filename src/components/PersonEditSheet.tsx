@@ -6,7 +6,8 @@ import { useTheme, type Theme } from '../theme';
 import { useI18n } from '../i18n';
 import { calendarFor } from '../utils/calendar';
 import { pickPersonPhoto } from '../utils/photo';
-import { albumPhotoUri, pickAlbumPhotos } from '../utils/album';
+import { pickAlbumPhotos } from '../utils/album';
+import { photoSource } from '../utils/photoFiles';
 import { fullName, isDeceased } from '../model/people';
 import { DatePicker } from './DatePicker';
 import { PersonPicker } from './PersonPicker';
@@ -216,7 +217,7 @@ export function PersonEditSheet({
             <Field styles={styles} label={t('photo')} isRTL={isRTL}>
               <View style={[styles.photoRow, isRTL && styles.rowRTL]}>
                 {photo ? (
-                  <Image source={{ uri: photo }} style={styles.photoPreview} />
+                  <Image source={{ uri: photoSource(photo) }} style={styles.photoPreview} />
                 ) : (
                   <View style={styles.photoPlaceholder} />
                 )}
@@ -370,7 +371,7 @@ export function PersonEditSheet({
                 <View style={[styles.albumGrid, isRTL && styles.rowRTL]}>
                   {album.map((entry, index) => (
                     <View key={`${index}-${entry.slice(-24)}`} style={styles.albumThumbWrap}>
-                      <Image source={{ uri: albumPhotoUri(entry) }} style={styles.albumThumb} />
+                      <Image source={{ uri: photoSource(entry) }} style={styles.albumThumb} />
                       <Pressable
                         style={styles.albumRemove}
                         onPress={() => setAlbum((current) => current.filter((_, i) => i !== index))}

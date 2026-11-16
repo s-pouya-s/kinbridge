@@ -165,12 +165,15 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Photos
 
-- The avatar `Person.photoUri` is always a `data:image/jpeg;base64,...` URI, never a `file://` path. It is cropped square, 320px, JPEG 0.7 (`pickPersonPhoto` in src/utils/photo.ts).
-- Album photos (`Person.photos`) stay out of the tree JSON. The whole tree is one AsyncStorage entry, and Android can't read an entry back past about 2MB (src/utils/album.ts).
-- On a phone, each album photo is its own JPEG in `Paths.document/album/` (at most 1280px, JPEG 0.75). The tree stores only the file name, never the full path, because the path can change when the app updates. On web an entry is an inline data: URI. Always show an entry through `albumPhotoUri(entry)`.
-- All trees share one album folder. `pruneAlbumFiles` must get every tree's data, never only the open tree, and runs only once at startup in App.tsx.
-- Export embeds album files as base64 (`readAlbumFiles`). Import writes back only the photos the chosen tree uses and never overwrites an existing file (`writeAlbumFiles`).
+- Card photos (`Person.photoUri`) and album photos (`Person.photos`) stay out of the tree JSON. The whole tree is one AsyncStorage entry, and Android can't read an entry back past about 2MB; inline card photos (about 20KB each) reached that on big trees (src/utils/photoFiles.ts).
+- On a phone, each photo is its own JPEG in `Paths.document/album/` (`photoDir`; the folder keeps the name "album", never rename it). The tree stores only the file name, never the full path, because the path can change when the app updates. On web a photo is an inline data: URI. Always show a photo through `photoSource(entry)`.
+- A card photo is cropped square, 320px, JPEG 0.7 (`pickPersonPhoto` in src/utils/photo.ts). An album photo is at most 1280px, JPEG 0.75 (`pickAlbumPhotos`).
+- Card photos saved inline before this (and inline ones in an import) are moved into files by `cardPhotosToFiles`: `loadFamilyData` does it once and saves the smaller tree. On load, the files are named after the tree and the person (`card-<tree>-<person>.jpg`), so two loads of one tree at the same moment (startup cleanup and the trees list) write the same files; random names there let the cleanup delete the ones the tree kept. A photo that can't be written stays inline.
+- All trees share one photo folder. `pruneAlbumFiles` counts card photos and album photos, must get every tree's data, never only the open tree, and runs only once at startup in App.tsx.
+- Export embeds album files as base64 (`readAlbumFiles`) and turns card photos back into inline data: URIs (`cardPhotosInline`), so the export format stays version 2 and older app versions can still import it. Import writes card photos to new files and writes back only the album photos the chosen tree uses, never overwriting an existing file (`writeAlbumFiles`).
+- The PDF gets card photos inline too (`cardPhotosInline` in pdf.ts): `buildTreePdfHtml` only draws data: photos and stays free of file access.
 - Photo permission is asked only on native. A refusal shows `t('photoPermissionDenied')`.
+- Both photo pickers ask for `quality: PICK_QUALITY` (1, src/utils/photo.ts), never less. Below 1, expo-image-picker on Android decodes the whole original photo (about 200MB for 50MP) just to save it again, and our resize decodes it a second time. On a big tree with many photos, the app crashed and closed right after a photo was picked. The resize step does all the compressing. A photo that still can't be processed shows `t('photoFailed')` instead of failing silently; the album keeps the photos that worked.
 
 ## Storage, migration, multiple trees
 
@@ -358,6 +361,7 @@ Follow these in every change. Part 1 is rules the owner has given. Part 2 is rul
 
 ## Builds
 
+- Branches (the owner's rule, 2026-11-16): `staging` is the default branch and all work is committed there. `main` is production: code reaches it only through a pull request from `staging`, and merging that pull request runs the release pipeline and makes the store files. Never commit or push straight to `main`. `.github/workflows/checks.yml` runs `check:all` on every push to `staging` and every pull request into `main`; it builds nothing.
 - `.github/workflows/release-builds.yml` runs on every push to `main` and by hand (workflow_dispatch). After `npm run check:all` it builds three files, entirely on GitHub's runner with no Expo or other outside build service (`npx expo prebuild`, then Gradle). Never add EAS (or any other build service) to it: the owner wants the pipeline local.
   - `kinbridge-phone`: the Bazaar version with test ads (`EXPO_PUBLIC_ADS_TEST=1`), arm64 only, for the owner's own phone.
   - `kinbridge-bazaar`: for the Cafe Bazaar console, both the release app bundle (`kinbridge-bazaar.aab`, signed with `jarsigner` using a keystore made on the spot from the key and `cert.pem`, after stripping Gradle's debug signature) and Bazaar's signed digest of it (`kinbridge-bazaar.bin`, made with Bazaar's bundle-signer `genbin`).

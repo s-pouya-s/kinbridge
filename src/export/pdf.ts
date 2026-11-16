@@ -4,6 +4,7 @@ import { File, Paths } from 'expo-file-system';
 import type { FamilyData } from '../types';
 import { buildTreePdfHtml, type PdfOptions } from './pdfHtml';
 import { saveThenOfferShare } from '../utils/saveFile';
+import { cardPhotosInline } from '../utils/photoFiles';
 
 /**
  * A4 in points. Android's PDF maker always makes portrait pages, so there
@@ -22,7 +23,8 @@ const PORTRAIT = { width: 595, height: 842 };
  */
 export async function exportTreePdf(data: FamilyData, options: PdfOptions): Promise<void> {
   const turnPages = Platform.OS === 'android';
-  const html = buildTreePdfHtml(data, { ...options, turnPages });
+  // The PDF's HTML takes card photos only inline (it stays free of file access).
+  const html = buildTreePdfHtml(await cardPhotosInline(data), { ...options, turnPages });
 
   if (Platform.OS === 'web') {
     await Print.printAsync({ html });

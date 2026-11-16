@@ -146,6 +146,7 @@ export const it: Record<StringKey, string> = {
   albumCount: 'Album foto ({count})',
   addAlbumPhotos: '+ Aggiungi foto',
   photoPermissionDenied: 'Serve l’accesso alla libreria foto per aggiungere un’immagine. Puoi consentirlo nelle impostazioni del dispositivo.',
+  photoFailed: 'Impossibile aggiungere questa foto. Prova con una foto più piccola.',
   bornYear: 'Data di nascita',
   diedYear: 'Data di morte',
   selectDate: 'Scegli data',

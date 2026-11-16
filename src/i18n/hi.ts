@@ -146,6 +146,7 @@ export const hi: Record<StringKey, string> = {
   albumCount: 'फ़ोटो एल्बम ({count})',
   addAlbumPhotos: '+ फ़ोटो जोड़ें',
   photoPermissionDenied: 'फ़ोटो जोड़ने के लिए फ़ोटो लाइब्रेरी की अनुमति चाहिए। आप इसे डिवाइस सेटिंग्स में दे सकते हैं।',
+  photoFailed: 'यह फ़ोटो नहीं जोड़ी जा सकी। कोई छोटी फ़ोटो आज़माएँ।',
   bornYear: 'जन्म तिथि',
   diedYear: 'मृत्यु तिथि',
   selectDate: 'तिथि चुनें',

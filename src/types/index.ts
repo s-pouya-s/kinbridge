@@ -35,18 +35,17 @@ export interface Person {
   graveLocation?: GraveLocation;
   notes?: string;
   /**
-   * A `data:image/jpeg;base64,...` URI — never a bare `file://` path, which
-   * would only ever resolve inside the app install that picked it. Set by
-   * src/utils/photo.ts's pickPersonPhoto, which also resizes/compresses on
-   * the way in so this stays reasonably sized in AsyncStorage and in a JSON
-   * export (see storage.ts), which carries it along as plain text either way.
+   * The card photo. On a phone, the file name of its own JPEG in the photo
+   * folder, never a full path (see src/utils/photoFiles.ts); on web, or in
+   * an export file, an inline `data:image/jpeg;base64,...` URI. Show it
+   * through photoSource. Set by src/utils/photo.ts's pickPersonPhoto.
    */
   photoUri?: string;
   /**
    * The person's photo album, in the order added: shown on their info sheet
    * after the notes. Each entry is a file name in the app's album folder
    * (on a phone) or an inline data: URI (on web) — see src/utils/album.ts
-   * for why, and albumPhotoUri to turn one into something an <Image> shows.
+   * for why, and photoFiles.ts's photoSource to turn one into something an <Image> shows.
    */
   photos?: string[];
   /** A placeholder for a spouse whose identity was never recorded. */

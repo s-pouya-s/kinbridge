@@ -146,6 +146,7 @@ export const ru: Record<StringKey, string> = {
   albumCount: 'Фотоальбом ({count})',
   addAlbumPhotos: '+ Добавить фото',
   photoPermissionDenied: 'Чтобы добавить фото, нужен доступ к галерее. Его можно разрешить в настройках устройства.',
+  photoFailed: 'Не удалось добавить это фото. Попробуйте фото поменьше.',
   bornYear: 'Дата рождения',
   diedYear: 'Дата смерти',
   selectDate: 'Выбрать дату',

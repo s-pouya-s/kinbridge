@@ -18,6 +18,7 @@ import { PersonPicker } from './PersonPicker';
 import { SearchIcon } from './SearchIcon';
 import { Spotlight } from './Spotlight';
 import { Minimap, MINIMAP_RESERVE, type MinimapCard, type MinimapLine } from './Minimap';
+import { photoSource } from '../utils/photoFiles';
 
 // The floor for both Reset's fit-by-height (see fitToViewport) and manual
 // pinch-zoom-out — fit-by-height rarely needs it (a tree's generation count
@@ -1059,7 +1060,7 @@ function PersonCard({
       {cardStyle === 'large' ? (
         <View style={[styles.cardTouchableLarge, !text.showPhoto && styles.cardTouchableLargeNoPhoto]}>
           {/* A photo on top when there is one; without one, no placeholder, and the names fill the card. */}
-          {text.showPhoto && <Image source={{ uri: person.photoUri }} style={[styles.cardPhotoLarge, { width: text.photoSize, height: text.photoSize }]} />}
+          {text.showPhoto && <Image source={{ uri: photoSource(person.photoUri!) }} style={[styles.cardPhotoLarge, { width: text.photoSize, height: text.photoSize }]} />}
           <Text
             numberOfLines={1}
             adjustsFontSizeToFit
@@ -1077,7 +1078,7 @@ function PersonCard({
       ) : (
         <View style={styles.cardTouchable}>
           {text.showPhoto && (
-            <Image source={{ uri: person.photoUri }} style={[styles.cardAvatar, { width: text.photoSize, height: text.photoSize, borderRadius: text.photoSize / 2 }]} />
+            <Image source={{ uri: photoSource(person.photoUri!) }} style={[styles.cardAvatar, { width: text.photoSize, height: text.photoSize, borderRadius: text.photoSize / 2 }]} />
           )}
           <Text numberOfLines={1} adjustsFontSizeToFit ellipsizeMode="tail" style={[styles.cardName, { fontSize: text.name.fontSize }, person.unknown && { color: theme.inkFaint }]}>
             {text.name.text}

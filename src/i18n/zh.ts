@@ -146,6 +146,7 @@ export const zh: Record<StringKey, string> = {
   albumCount: '相册（{count}）',
   addAlbumPhotos: '+ 添加照片',
   photoPermissionDenied: '需要访问相册才能添加图片。你可以在设备设置中允许访问。',
+  photoFailed: '无法添加这张照片。请尝试较小的照片。',
   bornYear: '出生日期',
   diedYear: '去世日期',
   selectDate: '选择日期',

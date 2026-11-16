@@ -146,6 +146,7 @@ export const ur: Record<StringKey, string> = {
   albumCount: 'فوٹو البم ({count})',
   addAlbumPhotos: '+ تصاویر شامل کریں',
   photoPermissionDenied: 'تصویر شامل کرنے کے لیے فوٹو لائبریری تک رسائی درکار ہے۔ آپ اسے ڈیوائس کی سیٹنگز میں اجازت دے سکتے ہیں۔',
+  photoFailed: 'یہ تصویر شامل نہیں ہو سکی۔ کوئی چھوٹی تصویر آزمائیں۔',
   bornYear: 'تاریخِ پیدائش',
   diedYear: 'تاریخِ وفات',
   selectDate: 'تاریخ منتخب کریں',

@@ -146,6 +146,7 @@ export const ar: Record<StringKey, string> = {
   albumCount: 'ألبوم الصور ({count})',
   addAlbumPhotos: '+ إضافة صور',
   photoPermissionDenied: 'يلزم الوصول إلى مكتبة الصور لإضافة صورة. يمكنك السماح بذلك من إعدادات جهازك.',
+  photoFailed: 'تعذّرت إضافة هذه الصورة. جرّب صورة أصغر.',
   bornYear: 'تاريخ الميلاد',
   diedYear: 'تاريخ الوفاة',
   selectDate: 'اختيار التاريخ',

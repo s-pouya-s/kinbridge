@@ -149,6 +149,7 @@ export const en = {
   albumCount: 'Photo album ({count})',
   addAlbumPhotos: '+ Add photos',
   photoPermissionDenied: 'Photo library access is needed to add a picture. You can allow it in your device settings.',
+  photoFailed: "This photo couldn't be added. Try a smaller photo.",
   bornYear: 'Date of birth',
   diedYear: 'Date of death',
   selectDate: 'Select date',

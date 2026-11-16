@@ -2,19 +2,19 @@ import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { showAlert } from './alert';
+import { keepPhotoFile } from './photoFiles';
 import type { TFunction } from '../i18n';
 
-/** Longest side a stored photo is ever resized to — plenty for a small avatar, small enough to keep AsyncStorage and JSON exports light even with several people's photos. */
+/** Longest side a card photo is resized to: plenty for a card, small enough to keep JSON exports light. */
 const MAX_DIMENSION = 320;
 const JPEG_QUALITY = 0.7;
 
 /**
- * Lets the user pick a photo from their library, crops it to a square, and
- * returns it as a `data:image/jpeg;base64,...` URI — never a bare `file://`
- * path, which would only resolve inside this one app install and break the
- * moment the photo rode along in a JSON export to another device (see
- * storage.ts). Resized/compressed on the way in so a full-resolution phone
- * photo doesn't bloat AsyncStorage or every future export.
+ * Lets the user pick a photo from their library, crops it to a square,
+ * resizes and compresses it, and returns the new Person.photoUri: on a
+ * phone the file name of its own JPEG in the photo folder (see
+ * photoFiles.ts; show it with photoSource), on web an inline
+ * `data:image/jpeg;base64,...` URI.
  *
  * Returns null if the user cancels, or doesn't grant photo-library access.
  */
@@ -31,19 +31,34 @@ export async function pickPersonPhoto(t: TFunction): Promise<string | null> {
     mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [1, 1],
-    quality: 0.8,
+    // Must stay 1 (PICK_QUALITY): see there.
+    quality: PICK_QUALITY,
   });
   if (result.canceled || !result.assets[0]) return null;
   const uri = result.assets[0].uri;
 
-  if (Platform.OS === 'web') {
-    return resizeImageWeb(uri, MAX_DIMENSION, JPEG_QUALITY);
+  try {
+    if (Platform.OS === 'web') {
+      return await resizeImageWeb(uri, MAX_DIMENSION, JPEG_QUALITY);
+    }
+    const rendered = await ImageManipulator.manipulate(uri).resize({ width: MAX_DIMENSION }).renderAsync();
+    const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY });
+    return keepPhotoFile(saved.uri);
+  } catch {
+    showAlert(t('photoFailed'));
+    return null;
   }
-
-  const rendered = await ImageManipulator.manipulate(uri).resize({ width: MAX_DIMENSION }).renderAsync();
-  const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY, base64: true });
-  return `data:image/jpeg;base64,${saved.base64}`;
 }
+
+/**
+ * The quality both photo pickers ask for. Below 1, expo-image-picker on
+ * Android decodes the whole original photo (about 200MB for a 50MP photo)
+ * just to save it again, before we decode it a second time to shrink it.
+ * With a big tree already using a lot of memory, that killed the app right
+ * after a photo was picked. At 1 it hands back the file as is, and the
+ * resize step does all the compressing.
+ */
+export const PICK_QUALITY = 1;
 
 /** expo-image-picker's web implementation hands back a browser-local uri (data:/blob:) with no size control of its own — draw it to a canvas at maxDimension to get the same bounded, compressed result native gets from expo-image-manipulator. */
 export function resizeImageWeb(uri: string, maxDimension: number, quality: number): Promise<string> {

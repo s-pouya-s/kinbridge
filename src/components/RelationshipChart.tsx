@@ -11,6 +11,7 @@ import { cardColors, raisedCardStyle } from './cardLook';
 import { ZoomableView } from './ZoomableView';
 import { MourningRibbon } from './MourningRibbon';
 import { isDeceased, shortName } from '../model/people';
+import { photoSource } from '../utils/photoFiles';
 
 const CARD_WIDTH = 156;
 const CARD_HEIGHT = 84;
@@ -157,7 +158,7 @@ export function RelationshipChart({ data, routes, onClose, showRibbon }: Props) 
                       ]}
                     >
                       {person.photoUri ? (
-                        <Image source={{ uri: person.photoUri }} style={styles.avatar} />
+                        <Image source={{ uri: photoSource(person.photoUri) }} style={styles.avatar} />
                       ) : (
                         <View style={[styles.avatar, styles.avatarEmpty, { borderColor: colors.stroke }]}>
                           <Text style={[styles.initial, { color: colors.stroke }]}>{person.unknown ? '?' : person.name.charAt(0)}</Text>

@@ -3,7 +3,7 @@ import { FlatList, Image, Modal, Pressable, StyleSheet, Text, useWindowDimension
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Props {
-  /** Image URIs, ready for <Image> (see utils/album.ts's albumPhotoUri). */
+  /** Image URIs, ready for <Image> (see utils/photoFiles.ts's photoSource). */
   uris: string[];
   /** Which photo to open on; null keeps the viewer closed. */
   startIndex: number | null;
